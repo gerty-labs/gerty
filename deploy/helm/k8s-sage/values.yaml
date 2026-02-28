@@ -1,0 +1,57 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  registry: ""
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+agent:
+  image:
+    repository: k8s-sage-agent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 50Mi
+    limits:
+      cpu: 100m
+      memory: 100Mi
+  scrapeInterval: "30s"
+  nodeSelector: {}
+  tolerations: []
+
+server:
+  image:
+    repository: k8s-sage-server
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  service:
+    type: ClusterIP
+    port: 8080
+  nodeSelector: {}
+  tolerations: []
+
+slm:
+  enabled: false
+  image:
+    repository: ollama/ollama
+    tag: latest
+  model: "k8s-sage:q4"
+  resources:
+    requests:
+      cpu: "1"
+      memory: 3Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
