@@ -32,17 +32,19 @@ const (
 // and resource requests. It uses the coefficient of variation, utilisation
 // ratio, and spike analysis to categorise the workload.
 func ClassifyWorkload(cpuUsage models.MetricAggregate, cpuRequestMillis int64, dataWindowMinutes float64) models.WorkloadPattern {
-	// Cannot classify with no data.
-	if cpuUsage.Max == 0 && cpuUsage.P50 == 0 {
-		return models.PatternSteady // default to steady with no data
-	}
-
 	// Check for idle first: mean usage < 5% of request for 48h+.
+	// This must come before the "no data" check because zero usage with a
+	// real request and sufficient data window IS idle, not "no data".
 	if cpuRequestMillis > 0 && dataWindowMinutes >= idleMinDataWindow {
 		utilisation := cpuUsage.P50 / float64(cpuRequestMillis)
 		if utilisation < idleUtilisationThreshold {
 			return models.PatternIdle
 		}
+	}
+
+	// Cannot classify shape with no data.
+	if cpuUsage.Max == 0 && cpuUsage.P50 == 0 {
+		return models.PatternSteady // default to steady with no data
 	}
 
 	// Compute coefficient of variation from available percentiles.
