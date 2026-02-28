@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gregorytcarroll/k8s-sage/internal/rules"
 	"github.com/gregorytcarroll/k8s-sage/internal/server"
 )
 
@@ -21,17 +22,18 @@ func main() {
 	}
 
 	aggregator := server.NewAggregator()
+	engine := rules.NewEngine()
 
 	done := make(chan struct{})
 	aggregator.StartPruner(done)
 
-	api := server.NewAPI(aggregator)
+	api := server.NewAPI(aggregator, engine)
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)
 
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      mux,
+		Handler:      server.LoggingMiddleware(mux),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,

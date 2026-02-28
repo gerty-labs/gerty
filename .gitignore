@@ -1,4 +1,7 @@
 bin/
+/agent
+/cli
+/server
 *.exe
 *.test
 *.out

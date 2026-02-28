@@ -6,9 +6,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gregorytcarroll/k8s-sage/internal/models"
+	"github.com/gregorytcarroll/k8s-sage/internal/rules"
 )
 
 const (
@@ -38,34 +40,88 @@ const (
 // API holds the HTTP handlers for sage-server.
 type API struct {
 	aggregator *Aggregator
+	engine     *rules.Engine
 }
 
-// NewAPI creates a new API with the given Aggregator.
-func NewAPI(aggregator *Aggregator) *API {
-	return &API{aggregator: aggregator}
+// NewAPI creates a new API with the given Aggregator and rules Engine.
+func NewAPI(aggregator *Aggregator, engine *rules.Engine) *API {
+	return &API{aggregator: aggregator, engine: engine}
 }
 
 // RegisterRoutes registers all API routes on the given ServeMux.
 func (api *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", api.HandleHealthz)
+	mux.HandleFunc("/readyz", api.HandleReadyz)
 	mux.HandleFunc("/api/v1/ingest", api.HandleIngest)
 	mux.HandleFunc("/api/v1/report", api.HandleReport)
+	mux.HandleFunc("/api/v1/workloads", api.HandleWorkloads)
+	mux.HandleFunc("/api/v1/workloads/", api.HandleWorkloads)
+	mux.HandleFunc("/api/v1/recommendations", api.HandleRecommendations)
+	mux.HandleFunc("/api/v1/analyze", api.HandleAnalyze)
+}
+
+// writeJSON writes a success response wrapped in the APIResponse envelope.
+func writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(models.NewOKResponse(data))
+}
+
+// writeError writes an error response wrapped in the APIResponse envelope.
+func writeError(w http.ResponseWriter, statusCode int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(models.NewErrorResponse(msg))
+}
+
+// statusWriter wraps http.ResponseWriter to capture the status code for logging.
+type statusWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+func (sw *statusWriter) WriteHeader(code int) {
+	sw.code = code
+	sw.ResponseWriter.WriteHeader(code)
+}
+
+// LoggingMiddleware logs method, path, status code, and duration for each request.
+func LoggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, code: http.StatusOK}
+		next.ServeHTTP(sw, r)
+		slog.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", sw.code,
+			"duration", time.Since(start).String(),
+		)
+	})
 }
 
 // HandleHealthz responds with a simple health check.
 func (api *API) HandleHealthz(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
 		"time":   time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
+// HandleReadyz returns 200 if the server has received at least one agent report,
+// 503 otherwise.
+func (api *API) HandleReadyz(w http.ResponseWriter, r *http.Request) {
+	if api.aggregator.PodCount() == 0 && api.aggregator.NodeCount() == 0 {
+		writeError(w, http.StatusServiceUnavailable, "no agent data received")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
 // HandleIngest receives a NodeReport from an agent via POST.
 func (api *API) HandleIngest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -76,36 +132,34 @@ func (api *API) HandleIngest(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if err.Error() == "http: request body too large" {
 			slog.Warn("ingest payload too large", "remoteAddr", r.RemoteAddr)
-			http.Error(w, `{"error":"payload too large"}`, http.StatusRequestEntityTooLarge)
+			writeError(w, http.StatusRequestEntityTooLarge, "payload too large")
 			return
 		}
 		slog.Error("reading ingest body", "error", err)
-		http.Error(w, `{"error":"failed to read request body"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
 
 	var report models.NodeReport
 	if err := json.Unmarshal(body, &report); err != nil {
 		slog.Warn("malformed ingest JSON", "error", err, "remoteAddr", r.RemoteAddr)
-		http.Error(w, fmt.Sprintf(`{"error":"malformed JSON: %s"}`, err.Error()), http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("malformed JSON: %s", err.Error()))
 		return
 	}
 
 	if err := validateNodeReport(&report); err != nil {
 		slog.Warn("invalid node report", "error", err, "node", report.NodeName)
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	ingested, atCapacity := api.aggregator.Ingest(report)
 
-	w.Header().Set("Content-Type", "application/json")
 	status := http.StatusOK
 	if atCapacity {
 		status = http.StatusTooManyRequests
 	}
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, status, map[string]interface{}{
 		"ingested":   ingested,
 		"atCapacity": atCapacity,
 	})
@@ -114,17 +168,15 @@ func (api *API) HandleIngest(w http.ResponseWriter, r *http.Request) {
 // HandleReport returns a cluster-wide or namespace-filtered waste report.
 func (api *API) HandleReport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	namespace := r.URL.Query().Get("namespace")
 
-	w.Header().Set("Content-Type", "application/json")
-
 	if namespace != "" {
 		if len(namespace) > maxNamespaceLen {
-			http.Error(w, `{"error":"namespace name too long"}`, http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "namespace name too long")
 			return
 		}
 
@@ -137,12 +189,147 @@ func (api *API) HandleReport(w http.ResponseWriter, r *http.Request) {
 				Pods:      []models.PodWaste{},
 			}
 		}
-		json.NewEncoder(w).Encode(nsReport)
+		writeJSON(w, http.StatusOK, nsReport)
 		return
 	}
 
 	report := api.aggregator.ClusterReport()
-	json.NewEncoder(w).Encode(report)
+	writeJSON(w, http.StatusOK, report)
+}
+
+// HandleWorkloads lists all OwnerWaste entries or returns a single workload detail.
+// GET /api/v1/workloads — list all workloads across namespaces
+// GET /api/v1/workloads/{ns}/{kind}/{name} — single workload detail
+func (api *API) HandleWorkloads(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Check for path parameters after /api/v1/workloads/
+	suffix := strings.TrimPrefix(r.URL.Path, "/api/v1/workloads")
+	suffix = strings.TrimPrefix(suffix, "/")
+
+	if suffix == "" {
+		// List mode: return all OwnerWaste entries across namespaces.
+		report := api.aggregator.ClusterReport()
+		var all []models.OwnerWaste
+		for _, nsReport := range report.Namespaces {
+			all = append(all, nsReport.Owners...)
+		}
+		if all == nil {
+			all = []models.OwnerWaste{}
+		}
+		writeJSON(w, http.StatusOK, all)
+		return
+	}
+
+	// Detail mode: expect ns/kind/name
+	parts := strings.SplitN(suffix, "/", 3)
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		writeError(w, http.StatusBadRequest, "path must be /api/v1/workloads/{namespace}/{kind}/{name}")
+		return
+	}
+
+	ns, kind, name := parts[0], parts[1], parts[2]
+
+	nsReport := api.aggregator.NamespaceReport(ns)
+	if nsReport == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("namespace %q not found", ns))
+		return
+	}
+
+	for _, ow := range nsReport.Owners {
+		if strings.EqualFold(ow.Owner.Kind, kind) && ow.Owner.Name == name {
+			writeJSON(w, http.StatusOK, ow)
+			return
+		}
+	}
+
+	writeError(w, http.StatusNotFound, fmt.Sprintf("workload %s/%s not found in namespace %q", kind, name, ns))
+}
+
+// HandleRecommendations returns recommendations from the rules engine.
+// GET /api/v1/recommendations — all recommendations
+// Supports ?risk= and ?namespace= query filters.
+func (api *API) HandleRecommendations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	report := api.aggregator.ClusterReport()
+	recs := api.engine.AnalyzeCluster(report)
+
+	// Apply optional filters.
+	riskFilter := r.URL.Query().Get("risk")
+	nsFilter := r.URL.Query().Get("namespace")
+
+	if riskFilter != "" || nsFilter != "" {
+		filtered := make([]models.Recommendation, 0, len(recs))
+		for _, rec := range recs {
+			if riskFilter != "" && !strings.EqualFold(string(rec.Risk), riskFilter) {
+				continue
+			}
+			if nsFilter != "" && rec.Target.Namespace != nsFilter {
+				continue
+			}
+			filtered = append(filtered, rec)
+		}
+		recs = filtered
+	}
+
+	if recs == nil {
+		recs = []models.Recommendation{}
+	}
+	writeJSON(w, http.StatusOK, recs)
+}
+
+// analyzeRequest is the expected JSON body for POST /api/v1/analyze.
+type analyzeRequest struct {
+	Namespace string `json:"namespace"`
+}
+
+// HandleAnalyze runs the rules engine on a specific namespace.
+// POST /api/v1/analyze — accepts {"namespace":"..."} body
+func (api *API) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req analyzeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %s", err.Error()))
+		return
+	}
+
+	if req.Namespace == "" {
+		writeError(w, http.StatusBadRequest, "namespace is required")
+		return
+	}
+	if len(req.Namespace) > maxNamespaceLen {
+		writeError(w, http.StatusBadRequest, "namespace name too long")
+		return
+	}
+
+	nsReport := api.aggregator.NamespaceReport(req.Namespace)
+	if nsReport == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("namespace %q not found", req.Namespace))
+		return
+	}
+
+	// Build a single-namespace ClusterReport to feed the engine.
+	clusterReport := models.ClusterReport{
+		Namespaces: map[string]*models.NamespaceReport{
+			req.Namespace: nsReport,
+		},
+	}
+	recs := api.engine.AnalyzeCluster(clusterReport)
+	if recs == nil {
+		recs = []models.Recommendation{}
+	}
+	writeJSON(w, http.StatusOK, recs)
 }
 
 // validateNodeReport checks that a NodeReport has all required fields and
