@@ -138,7 +138,19 @@ func GenerateCPURecommendation(
 	}
 
 	confidence := computeConfidence(stats)
-	risk := computeRisk(recReq, cpuUsage.P99, stats)
+
+	// Risk depends on pattern: for burst/batch patterns, the limit (not the
+	// request) provides the safety margin — the request is intentionally low
+	// for scheduling while the limit covers execution peaks.
+	var risk models.RiskLevel
+	switch stats.Pattern {
+	case models.PatternBatch:
+		risk = computeRisk(recLimit, cpuUsage.Max, stats)
+	case models.PatternBurstable:
+		risk = computeRisk(recLimit, cpuUsage.P99, stats)
+	default:
+		risk = computeRisk(recReq, cpuUsage.P99, stats)
+	}
 
 	return &models.Recommendation{
 		Target:           target,

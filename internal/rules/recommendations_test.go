@@ -88,7 +88,7 @@ func TestGenerateCPURecommendation_BurstableWorkload(t *testing.T) {
 	// RecReq = P50 * 1.30 = 200 * 1.30 = 260
 	// RecLimit = P99 * 1.25 = 600 * 1.25 = 750
 	// Savings = 2000 - 260 = 1740
-	// Risk: recReq/P99 = 260/600 = 0.433 < 1.0 -> HIGH
+	// Risk: burstable compares limit to P99: recLimit/P99 = 750/600 = 1.25 > 1.10 -> LOW
 	// Confidence: burstable, 10080 min -> capped at 0.80
 	usage := models.MetricAggregate{P50: 200, P95: 400, P99: 600, Max: 800}
 
@@ -100,7 +100,7 @@ func TestGenerateCPURecommendation_BurstableWorkload(t *testing.T) {
 	assert.Equal(t, int64(750), rec.RecommendedLimit)
 	assert.Equal(t, int64(1740), rec.EstSavings)
 	assert.InDelta(t, 0.80, rec.Confidence, 0.01)
-	assert.Equal(t, models.RiskHigh, rec.Risk)
+	assert.Equal(t, models.RiskLow, rec.Risk)
 	assert.Contains(t, rec.Reasoning, "Burstable")
 	assertSafetyInvariant_CPU(t, rec, usage)
 }
@@ -113,7 +113,7 @@ func TestGenerateCPURecommendation_BatchWorkload(t *testing.T) {
 	//   NOTE: IEEE 754 float64 represents 1.10 as 1.100000000000000088...,
 	//   so 1500.0 * 1.10 = 1650.0000000000002, and math.Ceil rounds to 1651.
 	// Savings = 2000 - 130 = 1870
-	// Risk: recReq/P99 = 130/800 = 0.1625 < 1.0 -> HIGH
+	// Risk: batch compares limit to Max: recLimit/Max = 1650/1500 = 1.10 >= 1.10 -> LOW
 	// Confidence: batch, 10080 min -> capped at 0.70
 	usage := models.MetricAggregate{P50: 100, P95: 400, P99: 800, Max: 1500}
 
@@ -125,7 +125,7 @@ func TestGenerateCPURecommendation_BatchWorkload(t *testing.T) {
 	assert.Equal(t, int64(1651), rec.RecommendedLimit)
 	assert.Equal(t, int64(1870), rec.EstSavings)
 	assert.InDelta(t, 0.70, rec.Confidence, 0.01)
-	assert.Equal(t, models.RiskHigh, rec.Risk)
+	assert.Equal(t, models.RiskLow, rec.Risk)
 	assert.Contains(t, rec.Reasoning, "Batch")
 	assertSafetyInvariant_CPU(t, rec, usage)
 }
