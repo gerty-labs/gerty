@@ -1,0 +1,67 @@
+{
+  "node": {
+    "nodeName": "test-node-1"
+  },
+  "pods": [
+    {
+      "podRef": {
+        "name": "nginx-deployment-abc123",
+        "namespace": "default"
+      },
+      "containers": [
+        {
+          "name": "nginx",
+          "cpu": {
+            "time": "2026-02-28T12:00:00Z",
+            "usageNanoCores": 150000000,
+            "usageCoreNanoSeconds": 5000000000
+          },
+          "memory": {
+            "time": "2026-02-28T12:00:00Z",
+            "usageBytes": 104857600,
+            "workingSetBytes": 83886080,
+            "rssBytes": 78643200,
+            "availableBytes": 921600000
+          },
+          "startTime": "2026-02-27T10:00:00Z"
+        }
+      ]
+    },
+    {
+      "podRef": {
+        "name": "api-server-def456",
+        "namespace": "production"
+      },
+      "containers": [
+        {
+          "name": "api",
+          "cpu": {
+            "time": "2026-02-28T12:00:00Z",
+            "usageNanoCores": 500000000,
+            "usageCoreNanoSeconds": 15000000000
+          },
+          "memory": {
+            "time": "2026-02-28T12:00:00Z",
+            "usageBytes": 524288000,
+            "workingSetBytes": 419430400,
+            "rssBytes": 398458880
+          },
+          "startTime": "2026-02-27T08:00:00Z"
+        },
+        {
+          "name": "sidecar",
+          "cpu": {
+            "time": "2026-02-28T12:00:00Z",
+            "usageNanoCores": 10000000
+          },
+          "memory": {
+            "time": "2026-02-28T12:00:00Z",
+            "usageBytes": 33554432,
+            "workingSetBytes": 25165824
+          },
+          "startTime": "2026-02-27T08:00:00Z"
+        }
+      ]
+    }
+  ]
+}
