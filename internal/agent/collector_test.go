@@ -131,11 +131,19 @@ func TestCollector_CollectOnce_HandlesNilCPU(t *testing.T) {
 	mock := &mockKubeletClient{response: summary}
 	collector := NewCollectorWithClient(mock, store, 30*time.Second)
 
-	// Should not panic.
+	// Should not panic with nil CPU.
 	collector.CollectOnce(context.Background())
 
 	keys := store.ContainerKeys()
-	assert.Len(t, keys, 1)
+	require.Len(t, keys, 1)
+	assert.Equal(t, "default/no-cpu-pod/container", keys[0])
+
+	// CPU should be recorded as zero when nil.
+	s, ok := store.GetContainerSummary("default/no-cpu-pod/container")
+	require.True(t, ok)
+	assert.Equal(t, float64(0), s.CPUNanoCores.P50, "CPU should be zero when kubelet returns nil CPU")
+	// Memory working set should be recorded correctly.
+	assert.Equal(t, float64(1000), s.MemoryWorkingSet.P50)
 }
 
 func TestCollector_CollectOnce_HandlesError(t *testing.T) {

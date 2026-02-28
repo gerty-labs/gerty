@@ -88,6 +88,10 @@ func TestReporter_HandleReport_MultipleContainersPerPod(t *testing.T) {
 	store := NewStore()
 	now := time.Now()
 
+	// api: CPU 500m usage, 2000m request -> waste = 2000 - 500 = 1500m
+	// sidecar: CPU 10m usage, 200m request -> waste = 200 - 10 = 190m
+	// api: mem WS 400MB, 1GB request -> waste = 600MB
+	// sidecar: mem WS 20MB, 100MB request -> waste = 80MB
 	store.Record(models.ContainerMetrics{
 		PodName: "api-pod", PodNamespace: "prod", ContainerName: "api",
 		Timestamp: now, CPUUsageNanoCores: 500_000_000, CPURequestMillis: 2000,
@@ -112,9 +116,11 @@ func TestReporter_HandleReport_MultipleContainersPerPod(t *testing.T) {
 	require.Len(t, report.Pods, 1)
 	assert.Len(t, report.Pods[0].Containers, 2)
 
-	// Total pod waste should be sum of container wastes.
-	assert.Greater(t, report.Pods[0].TotalCPUWasteMillis, float64(0))
-	assert.Greater(t, report.Pods[0].TotalMemWasteBytes, float64(0))
+	// Total pod waste should be exact sum of container wastes.
+	// CPU: 1500 + 190 = 1690m
+	assert.Equal(t, float64(1690), report.Pods[0].TotalCPUWasteMillis)
+	// Memory: 600_000_000 + 80_000_000 = 680_000_000
+	assert.Equal(t, float64(680_000_000), report.Pods[0].TotalMemWasteBytes)
 }
 
 func TestReporter_HandleReport_MethodNotAllowed(t *testing.T) {

@@ -250,7 +250,9 @@ func TestStore_DataWindow(t *testing.T) {
 	})
 
 	window := store.DataWindow(key)
-	assert.Greater(t, window, time.Duration(0))
+	// Both samples are within the 5-min raw buffer, so they remain as raw samples.
+	// The data window should span from (now-10min) to now = 10 minutes.
+	assert.Equal(t, 10*time.Minute, window)
 }
 
 func TestStore_ConcurrentAccess(t *testing.T) {
@@ -271,7 +273,7 @@ func TestStore_ConcurrentAccess(t *testing.T) {
 		close(done)
 	}()
 
-	// Reader goroutine — should not race.
+	// Reader goroutine -- should not race.
 	for i := 0; i < 50; i++ {
 		store.ContainerKeys()
 		store.GetContainerSummary("ns1/pod1/c1")
@@ -279,6 +281,15 @@ func TestStore_ConcurrentAccess(t *testing.T) {
 	}
 
 	<-done
+
+	// After all writes complete, verify data integrity.
+	keys := store.ContainerKeys()
+	assert.Len(t, keys, 1, "should have exactly one container after concurrent writes")
+	assert.Equal(t, "ns1/pod1/c1", keys[0])
+
+	summary, ok := store.GetContainerSummary("ns1/pod1/c1")
+	require.True(t, ok, "container should exist after writes")
+	assert.Greater(t, summary.CPUNanoCores.Max, float64(0), "max CPU should be > 0 after 100 writes")
 }
 
 func TestContainerKey(t *testing.T) {

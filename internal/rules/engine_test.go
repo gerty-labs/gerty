@@ -5,6 +5,7 @@ import (
 
 	"github.com/gregorytcarroll/k8s-sage/internal/models"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEngine_Analyze_ClampNegativeValues(t *testing.T) {
@@ -37,8 +38,12 @@ func TestEngine_Analyze_ClampNegativeValues(t *testing.T) {
 func TestEngine_Analyze_SteadyWithClearWaste(t *testing.T) {
 	engine := NewEngine()
 
-	// CPU usage with low CV: (220-200)/200 = 0.1 < 0.3 → Steady.
-	// P50/request = 200/2000 = 0.1 ≥ 0.05 → not idle.
+	// CPU usage with low CV: (220-200)/200 = 0.1 < 0.3 -> Steady.
+	// P50/request = 200/2000 = 0.1 >= 0.05 -> not idle.
+	// CPU: recReq = P95*1.20 = 220*1.20 = 264, recLimit = max(P99*1.25=312.5, 264) = 313
+	// savings = 2000 - 264 = 1736
+	// Mem: recReq = P99*1.20 = 250M*1.20 = 300M, recLimit = max(Max*1.25=375M, 300M) = 375M
+	// savings = 2B - 300M = 1.7B
 	input := AnalysisInput{
 		Owner:         models.OwnerReference{Kind: "Deployment", Name: "api", Namespace: "prod"},
 		ContainerName: "main",
@@ -58,17 +63,31 @@ func TestEngine_Analyze_SteadyWithClearWaste(t *testing.T) {
 	result := engine.Analyze(input)
 
 	assert.Equal(t, models.PatternSteady, result.Pattern)
-	assert.NotNil(t, result.CPURecommendation)
-	assert.NotNil(t, result.MemRecommendation)
+	require.NotNil(t, result.CPURecommendation)
+	require.NotNil(t, result.MemRecommendation)
+
+	// CPU recommendation: hand-calculated values
 	assert.Equal(t, "cpu", result.CPURecommendation.Resource)
+	assert.Equal(t, int64(264), result.CPURecommendation.RecommendedReq)
+	assert.Equal(t, int64(313), result.CPURecommendation.RecommendedLimit)
+	assert.Equal(t, int64(1736), result.CPURecommendation.EstSavings)
+	assert.InDelta(t, 0.95, result.CPURecommendation.Confidence, 0.01)
+
+	// Memory recommendation: hand-calculated values
 	assert.Equal(t, "memory", result.MemRecommendation.Resource)
-	assert.Greater(t, result.CPURecommendation.EstSavings, int64(0))
-	assert.Greater(t, result.MemRecommendation.EstSavings, int64(0))
+	assert.Equal(t, int64(300_000_000), result.MemRecommendation.RecommendedReq)
+	assert.Equal(t, int64(375_000_000), result.MemRecommendation.RecommendedLimit)
+	assert.Equal(t, int64(1_700_000_000), result.MemRecommendation.EstSavings)
+	assert.InDelta(t, 0.90, result.MemRecommendation.Confidence, 0.01)
 }
 
 func TestEngine_Analyze_SingleDataPoint(t *testing.T) {
 	engine := NewEngine()
 
+	// CPU: P50=P95=P99=Max=50, CV=0 -> Steady
+	// RecReq = P95 * 1.20 = 60, RecLimit = max(P99*1.25=62.5, 60) = 63
+	// Savings = 1000 - 60 = 940 (94% waste > 10% threshold) -> recommendation expected
+	// Confidence: steady, 0.5 min -> very low (~0.20)
 	input := AnalysisInput{
 		Owner:         models.OwnerReference{Kind: "Deployment", Name: "new-app", Namespace: "staging"},
 		ContainerName: "app",
@@ -82,10 +101,13 @@ func TestEngine_Analyze_SingleDataPoint(t *testing.T) {
 
 	result := engine.Analyze(input)
 
-	// Should still classify and potentially recommend, but with low confidence.
-	if result.CPURecommendation != nil {
-		assert.LessOrEqual(t, result.CPURecommendation.Confidence, confidenceMaxShortWindow)
-	}
+	// With 94% waste and a clear request, a recommendation must be produced.
+	require.NotNil(t, result.CPURecommendation, "94%% waste should produce a recommendation even with short data window")
+	assert.Equal(t, int64(60), result.CPURecommendation.RecommendedReq)
+	assert.Equal(t, int64(63), result.CPURecommendation.RecommendedLimit)
+	assert.Equal(t, int64(940), result.CPURecommendation.EstSavings)
+	assert.LessOrEqual(t, result.CPURecommendation.Confidence, confidenceMaxShortWindow)
+	assert.InDelta(t, 0.20, result.CPURecommendation.Confidence, 0.01)
 }
 
 func TestEngine_Analyze_NoWaste(t *testing.T) {
@@ -136,15 +158,20 @@ func TestEngine_AnalyzeCluster(t *testing.T) {
 
 	recs := engine.AnalyzeCluster(report)
 
-	// Should get at least one CPU recommendation for the wasteful workload.
-	assert.NotEmpty(t, recs)
+	// Should get exactly 2 recommendations: 1 CPU + 1 memory.
+	require.Len(t, recs, 2)
 
-	// Verify the target is correct.
+	// Verify all target the correct workload and include both resource types.
+	resourcesSeen := make(map[string]bool)
 	for _, rec := range recs {
 		assert.Equal(t, "Deployment", rec.Target.Kind)
 		assert.Equal(t, "web", rec.Target.Name)
 		assert.Equal(t, "default", rec.Target.Namespace)
+		assert.Greater(t, rec.EstSavings, int64(0))
+		resourcesSeen[rec.Resource] = true
 	}
+	assert.True(t, resourcesSeen["cpu"], "expected a CPU recommendation")
+	assert.True(t, resourcesSeen["memory"], "expected a memory recommendation")
 }
 
 func TestEngine_AnalyzeCluster_EmptyReport(t *testing.T) {

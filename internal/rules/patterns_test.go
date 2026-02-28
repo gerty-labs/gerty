@@ -23,11 +23,18 @@ func TestClassifyWorkload(t *testing.T) {
 			want:              models.PatternSteady, // CV = (120-100)/100 = 0.2 < 0.3
 		},
 		{
-			name:              "steady — CV exactly at threshold",
+			name:              "steady — CV just below threshold (0.29)",
 			cpuUsage:          models.MetricAggregate{P50: 100, P95: 129, P99: 150, Max: 160},
 			cpuRequestMillis:  500,
 			dataWindowMinutes: 10080,
 			want:              models.PatternSteady, // CV = (129-100)/100 = 0.29 < 0.3
+		},
+		{
+			name:              "burstable — CV exactly at threshold (0.30)",
+			cpuUsage:          models.MetricAggregate{P50: 100, P95: 130, P99: 150, Max: 160},
+			cpuRequestMillis:  500,
+			dataWindowMinutes: 10080,
+			want:              models.PatternBurstable, // CV = (130-100)/100 = 0.30, NOT < 0.3 -> burstable
 		},
 		{
 			name:              "burstable — moderate CV",
@@ -51,11 +58,18 @@ func TestClassifyWorkload(t *testing.T) {
 			want:              models.PatternIdle, // P50/req = 0.002 < 0.05
 		},
 		{
-			name:              "idle — exactly at 5% threshold",
+			name:              "idle — P50/req just below 5% (0.049)",
 			cpuUsage:          models.MetricAggregate{P50: 49, P95: 50, P99: 55, Max: 60},
 			cpuRequestMillis:  1000,
 			dataWindowMinutes: 3000,
 			want:              models.PatternIdle, // P50/req = 0.049 < 0.05
+		},
+		{
+			name:              "not idle — P50/req exactly at 5% (0.050)",
+			cpuUsage:          models.MetricAggregate{P50: 50, P95: 60, P99: 70, Max: 80},
+			cpuRequestMillis:  1000,
+			dataWindowMinutes: 3000,
+			want:              models.PatternSteady, // P50/req = 0.050, NOT < 0.05 -> not idle; CV = (60-50)/50 = 0.2 < 0.3 -> steady
 		},
 		{
 			name:              "not idle — just above 5% utilisation",

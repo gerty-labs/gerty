@@ -320,6 +320,13 @@ func TestAggregator_ConcurrentIngestion(t *testing.T) {
 	}
 
 	wg.Wait()
-	// If we get here without a race condition panic, the test passes.
-	assert.GreaterOrEqual(t, agg.PodCount(), 1)
+
+	// After all goroutines finish, verify data integrity.
+	assert.Equal(t, 1, agg.PodCount(), "all goroutines write the same pod key, should be exactly 1")
+	assert.Equal(t, 1, agg.NodeCount(), "all goroutines report from 'node-concurrent'")
+
+	report := agg.ClusterReport()
+	require.Contains(t, report.Namespaces, "ns")
+	assert.Len(t, report.Namespaces["ns"].Pods, 1)
+	assert.Equal(t, "pod-from-goroutine", report.Namespaces["ns"].Pods[0].PodName)
 }
