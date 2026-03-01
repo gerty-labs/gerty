@@ -40,10 +40,12 @@ func TestEngine_Analyze_SteadyWithClearWaste(t *testing.T) {
 
 	// CPU usage with low CV: (220-200)/200 = 0.1 < 0.3 -> Steady.
 	// P50/request = 200/2000 = 0.1 >= 0.05 -> not idle.
-	// CPU: recReq = P95*1.20 = 220*1.20 = 264, recLimit = max(P99*1.20=300, 264) = 300
-	// savings = 2000 - 264 = 1736
-	// Mem: recReq = P99*1.20 = 250M*1.20 = 300M, recLimit = max(Max*1.20=360M, 300M) = 360M
-	// savings = 2B - 300M = 1.7B
+	// CPU: recReq = P95*1.20 = 264. Conf=0.95 (>0.8 → cap=75%, floor=500).
+	//   264 < 500 → capped to 500. RecLimit = max(300, 500) = 500.
+	//   savings = 2000 - 500 = 1500.
+	// Mem: recReq = P99*1.20 = 300M. MemConf=0.90 (>0.8 → cap=75%, floor=500M).
+	//   300M < 500M → capped to 500M. RecLimit = max(360M, 500M) = 500M.
+	//   savings = 2B - 500M = 1.5B.
 	input := AnalysisInput{
 		Owner:         models.OwnerReference{Kind: "Deployment", Name: "api", Namespace: "prod"},
 		ContainerName: "main",
@@ -66,18 +68,18 @@ func TestEngine_Analyze_SteadyWithClearWaste(t *testing.T) {
 	require.NotNil(t, result.CPURecommendation)
 	require.NotNil(t, result.MemRecommendation)
 
-	// CPU recommendation: hand-calculated values
+	// CPU recommendation: capped at 75% reduction
 	assert.Equal(t, "cpu", result.CPURecommendation.Resource)
-	assert.Equal(t, int64(264), result.CPURecommendation.RecommendedReq)
-	assert.Equal(t, int64(300), result.CPURecommendation.RecommendedLimit)
-	assert.Equal(t, int64(1736), result.CPURecommendation.EstSavings)
+	assert.Equal(t, int64(500), result.CPURecommendation.RecommendedReq)
+	assert.Equal(t, int64(500), result.CPURecommendation.RecommendedLimit)
+	assert.Equal(t, int64(1500), result.CPURecommendation.EstSavings)
 	assert.InDelta(t, 0.95, result.CPURecommendation.Confidence, 0.01)
 
-	// Memory recommendation: hand-calculated values
+	// Memory recommendation: capped at 75% reduction
 	assert.Equal(t, "memory", result.MemRecommendation.Resource)
-	assert.Equal(t, int64(300_000_000), result.MemRecommendation.RecommendedReq)
-	assert.Equal(t, int64(360_000_000), result.MemRecommendation.RecommendedLimit)
-	assert.Equal(t, int64(1_700_000_000), result.MemRecommendation.EstSavings)
+	assert.Equal(t, int64(500_000_000), result.MemRecommendation.RecommendedReq)
+	assert.Equal(t, int64(500_000_000), result.MemRecommendation.RecommendedLimit)
+	assert.Equal(t, int64(1_500_000_000), result.MemRecommendation.EstSavings)
 	assert.InDelta(t, 0.90, result.MemRecommendation.Confidence, 0.01)
 }
 
@@ -85,9 +87,8 @@ func TestEngine_Analyze_SingleDataPoint(t *testing.T) {
 	engine := NewEngine()
 
 	// CPU: P50=P95=P99=Max=50, CV=0 -> Steady
-	// RecReq = P95 * 1.20 = 60, RecLimit = max(P99*1.20=60, 60) = 60
-	// Savings = 1000 - 60 = 940 (94% waste > 10% threshold) -> recommendation expected
-	// Confidence: steady, 0.5 min -> very low (~0.20)
+	// RecReq = P95 * 1.20 = 60. Confidence ≈ 0.20 (<0.5 → cap=30%, floor=700).
+	// 60 < 700 → capped to 700. Savings = 1000 - 700 = 300.
 	input := AnalysisInput{
 		Owner:         models.OwnerReference{Kind: "Deployment", Name: "new-app", Namespace: "staging"},
 		ContainerName: "app",
@@ -101,11 +102,11 @@ func TestEngine_Analyze_SingleDataPoint(t *testing.T) {
 
 	result := engine.Analyze(input)
 
-	// With 94% waste and a clear request, a recommendation must be produced.
-	require.NotNil(t, result.CPURecommendation, "94%% waste should produce a recommendation even with short data window")
-	assert.Equal(t, int64(60), result.CPURecommendation.RecommendedReq)
-	assert.Equal(t, int64(60), result.CPURecommendation.RecommendedLimit)
-	assert.Equal(t, int64(940), result.CPURecommendation.EstSavings)
+	// With waste and a clear request, recommendation produced but capped conservatively.
+	require.NotNil(t, result.CPURecommendation, "waste should produce a recommendation even with short data window")
+	assert.Equal(t, int64(700), result.CPURecommendation.RecommendedReq)
+	assert.Equal(t, int64(700), result.CPURecommendation.RecommendedLimit)
+	assert.Equal(t, int64(300), result.CPURecommendation.EstSavings)
 	assert.LessOrEqual(t, result.CPURecommendation.Confidence, confidenceMaxShortWindow)
 	assert.InDelta(t, 0.20, result.CPURecommendation.Confidence, 0.01)
 }

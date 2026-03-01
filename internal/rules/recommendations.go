@@ -123,6 +123,23 @@ func GenerateCPURecommendation(
 			cpuUsage.P50, cpuUsage.Max, recReq, recLimit)
 	}
 
+	// Apply confidence-gated reduction cap before floors.
+	confidence := computeConfidence(stats)
+	recReq, capApplied := capReduction(currentReqMillis, recReq, confidence)
+	recLimit = math.Max(recLimit, recReq)
+	if capApplied {
+		var maxPct float64
+		switch {
+		case confidence > 0.8:
+			maxPct = 75
+		case confidence > 0.5:
+			maxPct = 50
+		default:
+			maxPct = 30
+		}
+		reasoning += fmt.Sprintf(" (reduction capped at %.0f%% due to confidence level)", maxPct)
+	}
+
 	// Enforce floors.
 	floorApplied := recReq < float64(minRecommendedCPUMillis)
 	recReq = math.Max(recReq, float64(minRecommendedCPUMillis))
@@ -140,8 +157,6 @@ func GenerateCPURecommendation(
 	if wastePercent < wasteThresholdPercent {
 		return nil // Not enough waste to warrant a recommendation
 	}
-
-	confidence := computeConfidence(stats)
 
 	// Risk depends on pattern: for burst/batch patterns, the limit (not the
 	// request) provides the safety margin — the request is intentionally low
@@ -223,6 +238,29 @@ func GenerateMemoryRecommendation(
 			recReq/1048576, (headroomBurstableLimit-1)*100)
 	}
 
+	// Memory confidence follows CPU pattern but is slightly more conservative.
+	memStats := WorkloadStats{
+		Pattern:           cpuPattern,
+		DataWindowMinutes: dataWindowMinutes,
+	}
+	confidence := computeConfidence(memStats) * 0.95 // 5% less confident for memory
+
+	// Apply confidence-gated reduction cap before floors.
+	recReq, capApplied := capReduction(currentReqBytes, recReq, confidence)
+	recLimit = math.Max(recLimit, recReq)
+	if capApplied {
+		var maxPct float64
+		switch {
+		case confidence > 0.8:
+			maxPct = 75
+		case confidence > 0.5:
+			maxPct = 50
+		default:
+			maxPct = 30
+		}
+		reasoning += fmt.Sprintf(" (reduction capped at %.0f%% due to confidence level)", maxPct)
+	}
+
 	floorApplied := recReq < float64(minRecommendedMemBytes)
 	recReq = math.Max(recReq, float64(minRecommendedMemBytes))
 	recLimit = math.Max(recLimit, recReq)
@@ -238,13 +276,6 @@ func GenerateMemoryRecommendation(
 	if wastePercent < wasteThresholdPercent {
 		return nil
 	}
-
-	// Memory confidence follows CPU pattern but is slightly more conservative.
-	stats := WorkloadStats{
-		Pattern:           cpuPattern,
-		DataWindowMinutes: dataWindowMinutes,
-	}
-	confidence := computeConfidence(stats) * 0.95 // 5% less confident for memory
 
 	risk := computeMemoryRisk(recReq, memUsage)
 
@@ -313,6 +344,25 @@ func computeRisk(recommendedReq float64, p99 float64, stats WorkloadStats) model
 		return models.RiskMedium
 	}
 	return models.RiskLow
+}
+
+// capReduction limits how much a single recommendation can reduce a resource,
+// based on confidence. Prevents cliff-drop reductions on low-confidence data.
+func capReduction(current int64, recommended float64, confidence float64) (float64, bool) {
+	var maxReductionPct float64
+	switch {
+	case confidence > 0.8:
+		maxReductionPct = 0.75
+	case confidence > 0.5:
+		maxReductionPct = 0.50
+	default:
+		maxReductionPct = 0.30
+	}
+	floor := float64(current) * (1.0 - maxReductionPct)
+	if recommended < floor {
+		return floor, true
+	}
+	return recommended, false
 }
 
 // computeMemoryRisk determines risk for memory recommendations. Memory risk is
