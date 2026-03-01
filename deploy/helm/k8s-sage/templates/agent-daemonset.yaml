@@ -38,6 +38,10 @@ spec:
                   fieldPath: spec.nodeName
             - name: KUBELET_URL
               value: "https://$(NODE_NAME):10250"
+            - name: SERVER_URL
+              value: "http://{{ include "k8s-sage.fullname" . }}-server:{{ .Values.server.service.port }}"
+            - name: PUSH_INTERVAL
+              value: {{ .Values.agent.pushInterval | quote }}
           resources:
             requests:
               cpu: {{ .Values.agent.resources.requests.cpu }}

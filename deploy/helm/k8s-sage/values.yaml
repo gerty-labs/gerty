@@ -17,6 +17,7 @@ agent:
       cpu: 100m
       memory: 100Mi
   scrapeInterval: "30s"
+  pushInterval: "5m"
   nodeSelector: {}
   tolerations: []
 

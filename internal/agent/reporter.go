@@ -40,6 +40,12 @@ func (r *Reporter) HandleReport(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+// BuildReport constructs the full waste report from the store's data.
+// It is used by the Pusher to obtain the current NodeReport for pushing to the server.
+func (r *Reporter) BuildReport() models.NodeReport {
+	return r.buildReport()
+}
+
 // buildReport constructs the full waste report from the store's data.
 func (r *Reporter) buildReport() models.NodeReport {
 	keys := r.store.ContainerKeys()

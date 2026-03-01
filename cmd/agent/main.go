@@ -26,9 +26,25 @@ func main() {
 		kubeletURL = "https://localhost:10250"
 	}
 
+	serverURL := os.Getenv("SERVER_URL")
+	if serverURL == "" {
+		serverURL = "http://k8s-sage-server:8080"
+	}
+
+	pushInterval := 5 * time.Minute
+	if pi := os.Getenv("PUSH_INTERVAL"); pi != "" {
+		parsed, err := time.ParseDuration(pi)
+		if err != nil {
+			slog.Error("invalid PUSH_INTERVAL", "value", pi, "error", err)
+			os.Exit(1)
+		}
+		pushInterval = parsed
+	}
+
 	store := agent.NewStore()
 	collector := agent.NewCollector(kubeletURL, store, 30*time.Second)
 	reporter := agent.NewReporter(nodeName, store)
+	pusher := agent.NewPusher(serverURL, reporter, pushInterval)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/report", reporter.HandleReport)
@@ -46,6 +62,7 @@ func main() {
 	defer cancel()
 
 	go collector.Run(ctx)
+	go pusher.Run(ctx)
 
 	go func() {
 		slog.Info("agent listening", "addr", server.Addr, "node", nodeName)
