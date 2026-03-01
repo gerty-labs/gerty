@@ -1,44 +1,38 @@
 #!/usr/bin/env python3
 """Collect training pairs from Kubernetes-related GitHub issues.
 
-Uses the GitHub API to find issues related to resource management,
-OOMKill, CPU throttling, and right-sizing from key repositories.
+Uses the GitHub API (via urllib — no external dependencies) to find
+issues related to resource management, OOMKill, CPU throttling, and
+right-sizing from key Kubernetes repositories.
 
-Target repositories:
-- kubernetes/kubernetes (core resource issues)
-- kubernetes/autoscaler (VPA/HPA issues)
-- Popular operator repos with resource-related issues
+Licensing: GitHub issues are public user-contributed content.
+Transformation into instruction pairs is considered fair use.
+Each pair includes the issue URL as provenance.
 
-Licensing: GitHub issues are public, but check each repo's licence
-before including content. Issues themselves are user-contributed and
-may not have explicit licensing. Transformation into instruction pairs
-for model training is considered fair use for public discussions.
-
-API rate limits: GitHub API allows 5,000 requests/hour with auth,
-60/hour without. Always use authenticated requests and implement
-backoff.
-
-Expected output: ~3,000 instruction pairs in JSONL format.
+API rate limits: 5,000 requests/hour with auth, 60/hour without.
+This script uses ~300-600 API calls per run.
 
 Usage:
     export GITHUB_TOKEN=ghp_...
-    python collect_gh_issues.py --output ml/dataset/data/gh_issues.jsonl
+    python collect_gh_issues.py [--output ml/dataset/raw/github_issues_pairs.jsonl] [--verbose]
 """
 
 import argparse
+import hashlib
 import json
 import logging
 import os
+import re
+import ssl
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-
-# NOTE: Never hardcode tokens. Always use environment variables.
-# The GITHUB_TOKEN env var should be a personal access token with
-# public_repo scope (read-only access to public repositories).
 
 SYSTEM_PROMPT = (
     "You are k8s-sage, a Kubernetes resource efficiency specialist. "
@@ -47,33 +41,51 @@ SYSTEM_PROMPT = (
     "and flag risks."
 )
 
-# Repositories and search queries.
+# Output goes to raw/ since it needs human review.
+DEFAULT_OUTPUT = Path("ml/dataset/raw/github_issues_pairs.jsonl")
+
+# Repositories to search.
 TARGET_REPOS = [
     "kubernetes/kubernetes",
     "kubernetes/autoscaler",
     "FairwindsOps/goldilocks",
-    "kubecost/cost-analyzer-helm-chart",
+    "kubernetes-sigs/descheduler",
 ]
 
-# Labels that indicate resource-related issues.
-RESOURCE_LABELS = [
-    "kind/bug",
-    "sig/node",
-    "area/resource-management",
-]
-
-# Search keywords for issue content.
-SEARCH_KEYWORDS = [
+# Search queries — each combined with repo and is:issue is:closed.
+SEARCH_QUERIES = [
     "OOMKill",
     "OOMKilled",
-    "cpu throttl",
-    "resource request",
-    "resource limit",
-    "right-siz",
-    "over-provision",
-    "under-provision",
-    "memory leak kubernetes",
+    "cpu throttling",
+    "resource requests limits",
+    "right-sizing resources",
+    "over-provisioned",
+    "under-provisioned",
+    "memory leak pod",
     "VPA recommendation",
+    "vertical pod autoscaler",
+    "CPU limit throttle",
+    "resource quota exceeded",
+    "LimitRange",
+    "container memory",
+    "HPA scaling",
+]
+
+# Keywords that must appear in the resolution for quality.
+RESOURCE_KEYWORDS = {
+    "memory", "cpu", "request", "limit", "oom", "throttle", "throttling",
+    "vpa", "hpa", "resource", "millicores", "mib", "gib", "mi", "gi",
+    "container", "pod", "node", "autoscal", "right-siz", "provision",
+    "evict", "qos", "burstable", "guaranteed", "besteffort",
+}
+
+# Words that indicate the issue is NOT useful for training.
+SKIP_PATTERNS = [
+    r"^(test|e2e|ci|flake)\b",
+    r"\btest failure\b",
+    r"\brelease note\b",
+    r"\bapi deprecat",
+    r"\bvendor\b.*\bupdate\b",
 ]
 
 
@@ -99,7 +111,9 @@ class TrainingPair:
         }
 
     def is_valid(self) -> bool:
-        if len(self.assistant) < 50:
+        if len(self.assistant) < 100:
+            return False
+        if len(self.user) < 30:
             return False
         if not self.metadata.get("provenance"):
             return False
@@ -109,18 +123,17 @@ class TrainingPair:
 class GitHubClient:
     """GitHub API client with rate limiting and backoff.
 
-    Args:
-        token: GitHub personal access token. If None, uses unauthenticated
-               requests (60 req/hour limit).
+    Uses urllib.request (stdlib) to avoid external dependencies.
     """
 
     BASE_URL = "https://api.github.com"
 
     def __init__(self, token: Optional[str] = None):
         self.token = token
-        self.session = None  # TODO: Use requests.Session for connection pooling
         self._request_count = 0
-        self._rate_limit_remaining = 5000
+        self._rate_limit_remaining = 5000 if token else 60
+        # Create SSL context for HTTPS
+        self._ssl_ctx = ssl.create_default_context()
 
     def _headers(self) -> dict:
         headers = {
@@ -131,122 +144,290 @@ class GitHubClient:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
+    def _request(self, url: str, params: Optional[dict] = None) -> Optional[dict]:
+        """Make an authenticated GET request with rate limiting."""
+        if params:
+            url = f"{url}?{urllib.parse.urlencode(params)}"
+
+        req = urllib.request.Request(url, headers=self._headers())
+        self._request_count += 1
+
+        try:
+            with urllib.request.urlopen(req, context=self._ssl_ctx, timeout=30) as resp:
+                # Update rate limit tracking.
+                self._rate_limit_remaining = int(
+                    resp.headers.get("X-RateLimit-Remaining", self._rate_limit_remaining)
+                )
+                if self._rate_limit_remaining < 50:
+                    reset_time = int(resp.headers.get("X-RateLimit-Reset", 0))
+                    wait = max(reset_time - time.time(), 0) + 2
+                    logger.warning(
+                        "Rate limit low (%d remaining), sleeping %.0f seconds",
+                        self._rate_limit_remaining,
+                        wait,
+                    )
+                    time.sleep(wait)
+
+                return json.loads(resp.read().decode("utf-8"))
+
+        except urllib.error.HTTPError as e:
+            if e.code == 403:
+                # Rate limited — wait and retry once.
+                reset_time = int(e.headers.get("X-RateLimit-Reset", 0))
+                wait = max(reset_time - time.time(), 0) + 5
+                logger.warning("Rate limited (403). Sleeping %.0f seconds", wait)
+                time.sleep(wait)
+                return self._request(url)  # Retry once.
+            elif e.code == 422:
+                logger.debug("Unprocessable query (422) for %s", url)
+                return None
+            else:
+                logger.error("HTTP %d for %s: %s", e.code, url, e.read().decode())
+                return None
+        except (urllib.error.URLError, TimeoutError) as e:
+            logger.error("Request failed for %s: %s", url, e)
+            return None
+
     def search_issues(
         self,
         repo: str,
         query: str,
-        max_results: int = 100,
+        max_results: int = 30,
     ) -> list[dict]:
-        """Search for issues matching a query in a repository.
+        """Search for closed issues matching a query in a repository."""
+        url = f"{self.BASE_URL}/search/issues"
+        params = {
+            "q": f"{query} repo:{repo} is:issue is:closed",
+            "sort": "reactions",
+            "order": "desc",
+            "per_page": min(max_results, 100),
+        }
 
-        Args:
-            repo: Repository in "owner/name" format.
-            query: Search query string.
-            max_results: Maximum number of results to return.
+        data = self._request(url, params)
+        if data is None:
+            return []
 
-        Returns:
-            List of issue dicts from the GitHub API.
+        items = data.get("items", [])
+        logger.debug(
+            "  %s '%s': %d results (total_count=%d)",
+            repo, query, len(items), data.get("total_count", 0),
+        )
+        return items
 
-        TODO: Implement with requests library.
-        """
-        # url = f"{self.BASE_URL}/search/issues"
-        # params = {
-        #     "q": f"{query} repo:{repo} is:issue is:closed",
-        #     "sort": "reactions",
-        #     "order": "desc",
-        #     "per_page": min(max_results, 100),
-        # }
-        #
-        # Pagination: follow Link headers for multi-page results.
-        # Rate limiting: check X-RateLimit-Remaining header.
-        # Backoff: if rate limited, wait until X-RateLimit-Reset timestamp.
-        #
-        # resp = self.session.get(url, params=params, headers=self._headers())
-        # self._rate_limit_remaining = int(resp.headers.get("X-RateLimit-Remaining", 0))
-        # if self._rate_limit_remaining < 10:
-        #     reset_time = int(resp.headers.get("X-RateLimit-Reset", 0))
-        #     wait = max(reset_time - time.time(), 0) + 1
-        #     logger.warning("Rate limit near, sleeping %.0f seconds", wait)
-        #     time.sleep(wait)
-        #
-        # return resp.json().get("items", [])
-        raise NotImplementedError("GitHub API client not yet implemented — scaffold only")
+    def get_issue_with_comments(
+        self, repo: str, issue_number: int
+    ) -> Optional[dict]:
+        """Fetch a single issue with its comments."""
+        # Fetch issue.
+        issue_url = f"{self.BASE_URL}/repos/{repo}/issues/{issue_number}"
+        issue_data = self._request(issue_url)
+        if issue_data is None:
+            return None
 
-    def get_issue_with_comments(self, repo: str, issue_number: int) -> Optional[dict]:
-        """Fetch a single issue with its top comments.
+        # Fetch comments (up to 20, sorted by created).
+        comments_url = f"{self.BASE_URL}/repos/{repo}/issues/{issue_number}/comments"
+        comments_data = self._request(comments_url, {"per_page": 20})
+        if comments_data is None:
+            comments_data = []
 
-        Args:
-            repo: Repository in "owner/name" format.
-            issue_number: Issue number.
-
-        Returns:
-            Dict with issue body and top comments, or None on failure.
-
-        TODO: Implement with requests library.
-        """
-        # Fetch issue: GET /repos/{repo}/issues/{number}
-        # Fetch comments: GET /repos/{repo}/issues/{number}/comments?per_page=10&sort=reactions
-        # Filter: only comments with reactions > 0 or from maintainers
-        raise NotImplementedError("GitHub API client not yet implemented — scaffold only")
+        return {
+            "issue": issue_data,
+            "comments": comments_data,
+        }
 
 
-def issue_to_pair(issue: dict, comments: list[dict], repo: str) -> Optional[TrainingPair]:
-    """Transform a GitHub issue + comments into an instruction-tuning pair.
+def _classify_category(text: str) -> str:
+    """Classify issue text into a training category."""
+    text_lower = text.lower()
 
-    The user message describes the problem (from the issue body).
-    The assistant message provides the solution (from the top comment/resolution).
+    # Check for runtime-specific patterns.
+    runtime_keywords = [
+        "jvm", "java", "golang", " go ", "python", "node.js", "nodejs",
+        ".net", "dotnet", "ruby", "php", "rust", "erlang", "scala",
+    ]
+    if any(kw in text_lower for kw in runtime_keywords):
+        return "runtime-specific"
 
-    Args:
-        issue: GitHub issue dict (title, body, labels).
-        comments: List of comment dicts (body, reactions).
-        repo: Repository name for provenance.
+    # Check for edge cases.
+    edge_keywords = [
+        "oomkill", "oomkilled", "crash", "crashloop", "evict",
+        "pending", "stuck", "not working", "debug", "troubleshoot",
+        "unexpected", "weird", "strange", "bug", "regression",
+    ]
+    if any(kw in text_lower for kw in edge_keywords):
+        return "edge-case"
 
-    Returns:
-        TrainingPair if successfully transformed, None if the issue
-        doesn't contain enough information for a useful pair.
+    # Check for classification topics.
+    class_keywords = [
+        "classify", "pattern", "steady", "burstable", "batch", "idle",
+        "qos", "workload type", "best effort", "guaranteed",
+    ]
+    if any(kw in text_lower for kw in class_keywords):
+        return "classification"
 
-    Quality filters:
-    - Issue must have a clear problem description
-    - Resolution must contain actionable advice (not just "fixed in v1.X")
-    - Skip issues that are purely about API changes or test failures
-    """
-    # TODO: Implement transformation logic.
-    #
-    # 1. Extract the problem description from issue body.
-    #    - Look for error messages, kubectl output, metric values.
-    #    - Ignore issues that are feature requests without solutions.
-    #
-    # 2. Extract the solution from the best comment or issue resolution.
-    #    - Prefer comments with highest reaction count.
-    #    - Prefer comments from maintainers (check author_association).
-    #
-    # 3. Reformat into instruction pair:
-    #    - user: "I'm seeing [problem]. My workload has [context]."
-    #    - assistant: "The issue is [root cause]. To fix: [steps]."
-    #
-    # 4. Classify the pair:
-    #    - category: right-sizing, classification, runtime-specific, edge-case
-    #    - pattern: steady, burstable, batch, idle (if applicable)
-    #
-    # 5. Flag for review if extraction confidence is low:
-    #    metadata["needs_review"] = True
-    #
-    # issue_url = f"https://github.com/{repo}/issues/{issue['number']}"
-    # pair = TrainingPair(
-    #     id=f"github-{repo.replace('/', '-')}-{issue['number']}",
-    #     user=formatted_problem,
-    #     assistant=formatted_solution,
-    #     metadata={
-    #         "category": detected_category,
-    #         "provenance": issue_url,
-    #         "needs_review": True,
-    #     },
-    # )
-    # return pair
-    raise NotImplementedError("Issue transformation not yet implemented — scaffold only")
+    # Default to right-sizing.
+    return "right-sizing"
 
 
-def collect_all(output_path: Path) -> None:
+def _has_resource_content(text: str) -> bool:
+    """Check if text contains resource-management keywords."""
+    text_lower = text.lower()
+    matches = sum(1 for kw in RESOURCE_KEYWORDS if kw in text_lower)
+    return matches >= 2  # Need at least 2 resource keywords.
+
+
+def _should_skip(title: str) -> bool:
+    """Check if issue title indicates non-useful content."""
+    title_lower = title.lower()
+    return any(re.search(pat, title_lower) for pat in SKIP_PATTERNS)
+
+
+def _clean_body(body: str, max_len: int = 2000) -> str:
+    """Clean and truncate issue/comment body."""
+    if not body:
+        return ""
+    # Remove HTML comments.
+    body = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
+    # Remove image links.
+    body = re.sub(r"!\[.*?\]\(.*?\)", "[image]", body)
+    # Remove very long code blocks (>500 chars).
+    body = re.sub(r"```[\s\S]{500,}?```", "[long code block omitted]", body)
+    # Collapse multiple newlines.
+    body = re.sub(r"\n{3,}", "\n\n", body)
+    # Truncate.
+    if len(body) > max_len:
+        body = body[:max_len] + "\n[truncated]"
+    return body.strip()
+
+
+def _score_comment(comment: dict) -> float:
+    """Score a comment by quality signals."""
+    score = 0.0
+    reactions = comment.get("reactions", {})
+
+    # Positive reactions.
+    score += reactions.get("+1", 0) * 2
+    score += reactions.get("heart", 0) * 2
+    score += reactions.get("hooray", 0) * 1
+    score += reactions.get("laugh", 0) * 0.5
+
+    # Maintainer/member bonus.
+    association = comment.get("author_association", "NONE")
+    if association in ("MEMBER", "OWNER", "COLLABORATOR"):
+        score += 10
+    elif association == "CONTRIBUTOR":
+        score += 5
+
+    # Length bonus (longer = more detailed).
+    body_len = len(comment.get("body", ""))
+    if body_len > 200:
+        score += 3
+    if body_len > 500:
+        score += 3
+
+    # Resource keyword bonus.
+    if _has_resource_content(comment.get("body", "")):
+        score += 5
+
+    return score
+
+
+def issue_to_pair(
+    issue: dict, comments: list[dict], repo: str
+) -> Optional[TrainingPair]:
+    """Transform a GitHub issue + comments into an instruction-tuning pair."""
+    title = issue.get("title", "")
+    body = issue.get("body", "")
+    number = issue.get("number", 0)
+    issue_url = f"https://github.com/{repo}/issues/{number}"
+
+    # Skip non-useful issues.
+    if _should_skip(title):
+        logger.debug("Skipping (title filter): %s", title)
+        return None
+
+    if not body or len(body) < 50:
+        logger.debug("Skipping (short body): %s", title)
+        return None
+
+    # Need at least 1 comment with substance.
+    if len(comments) < 1:
+        logger.debug("Skipping (no comments): %s", title)
+        return None
+
+    # Find best comment(s) as the "answer".
+    scored = [(c, _score_comment(c)) for c in comments]
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    # Take top comment(s) with score > 0 and body > 100 chars.
+    best_comments = [
+        c for c, s in scored
+        if s > 0 and len(c.get("body", "")) > 100
+    ]
+
+    if not best_comments:
+        # Fallback: take the comment with most text that has resource keywords.
+        for c, _ in scored:
+            if len(c.get("body", "")) > 100 and _has_resource_content(c.get("body", "")):
+                best_comments = [c]
+                break
+
+    if not best_comments:
+        logger.debug("Skipping (no quality comments): %s", title)
+        return None
+
+    # Build user message from issue body.
+    clean_body = _clean_body(body, max_len=1500)
+
+    # Check resource relevance.
+    combined_text = title + " " + clean_body
+    if not _has_resource_content(combined_text):
+        logger.debug("Skipping (not resource-related): %s", title)
+        return None
+
+    user_msg = f"## {title}\n\n{clean_body}"
+
+    # Build assistant message from best comment(s).
+    answer_parts = []
+    for comment in best_comments[:3]:  # Max 3 comments.
+        author = comment.get("user", {}).get("login", "unknown")
+        association = comment.get("author_association", "")
+        clean_comment = _clean_body(comment.get("body", ""), max_len=1200)
+        if clean_comment:
+            role = f" ({association.lower()})" if association in ("MEMBER", "OWNER") else ""
+            answer_parts.append(clean_comment)
+
+    assistant_msg = "\n\n---\n\n".join(answer_parts)
+
+    if len(assistant_msg) < 100:
+        logger.debug("Skipping (short answer): %s", title)
+        return None
+
+    # Classify.
+    category = _classify_category(combined_text + " " + assistant_msg)
+
+    # Build labels from issue labels.
+    labels = [
+        label.get("name", "") for label in issue.get("labels", [])
+    ]
+
+    pair_id = f"github-{repo.replace('/', '-')}-{number}"
+
+    return TrainingPair(
+        id=pair_id,
+        user=user_msg,
+        assistant=assistant_msg,
+        metadata={
+            "category": category,
+            "provenance": issue_url,
+            "needs_review": True,
+            "labels": labels,
+            "comment_count": len(comments),
+        },
+    )
+
+
+def collect_all(output_path: Path, verbose: bool = False) -> None:
     """Main collection pipeline."""
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -257,55 +438,98 @@ def collect_all(output_path: Path) -> None:
 
     client = GitHubClient(token=token)
     all_pairs: list[TrainingPair] = []
+    seen_issue_ids: set[str] = set()  # Deduplicate across queries.
 
     for repo in TARGET_REPOS:
-        logger.info("Searching %s", repo)
+        logger.info("=== Searching %s ===", repo)
+        repo_pairs = 0
 
-        for keyword in SEARCH_KEYWORDS:
-            logger.debug("  Query: %s", keyword)
+        for query in SEARCH_QUERIES:
+            logger.info("  Query: '%s'", query)
 
-            try:
-                issues = client.search_issues(repo, keyword, max_results=50)
-            except NotImplementedError:
-                logger.info("Scaffold only — skipping actual API calls")
-                break
+            issues = client.search_issues(repo, query, max_results=30)
 
             for issue in issues:
-                issue_detail = client.get_issue_with_comments(repo, issue["number"])
-                if issue_detail is None:
+                number = issue.get("number", 0)
+                pair_id = f"github-{repo.replace('/', '-')}-{number}"
+
+                # Deduplicate.
+                if pair_id in seen_issue_ids:
+                    continue
+                seen_issue_ids.add(pair_id)
+
+                # Fetch full issue + comments.
+                detail = client.get_issue_with_comments(repo, number)
+                if detail is None:
                     continue
 
-                pair = issue_to_pair(
-                    issue_detail["issue"],
-                    issue_detail["comments"],
-                    repo,
-                )
-                if pair is not None:
+                pair = issue_to_pair(detail["issue"], detail["comments"], repo)
+                if pair is not None and pair.is_valid():
                     all_pairs.append(pair)
+                    repo_pairs += 1
 
-            # Rate limit: 1 second between searches.
-            time.sleep(1.0)
+                # Small delay between issue fetches.
+                time.sleep(0.3)
 
-    # Validate and write.
-    valid_pairs = [p for p in all_pairs if p.is_valid()]
-    logger.info("Generated %d valid pairs from %d total", len(valid_pairs), len(all_pairs))
+            # Rate limit between search queries.
+            time.sleep(1.5)
 
+        logger.info("  %s: %d pairs collected", repo, repo_pairs)
+
+    # Final dedup by content hash (different issues, same content).
+    unique_pairs = []
+    content_hashes: set[str] = set()
+    for pair in all_pairs:
+        h = hashlib.md5(
+            (pair.user + pair.assistant).encode()
+        ).hexdigest()
+        if h not in content_hashes:
+            content_hashes.add(h)
+            unique_pairs.append(pair)
+        else:
+            logger.debug("Removed duplicate content: %s", pair.id)
+
+    logger.info(
+        "Total: %d pairs (%d before dedup). API calls: %d",
+        len(unique_pairs), len(all_pairs), client._request_count,
+    )
+
+    # Write output.
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
-        for pair in valid_pairs:
+        for pair in unique_pairs:
             f.write(json.dumps(pair.to_dict()) + "\n")
 
-    logger.info("Wrote %d pairs to %s", len(valid_pairs), output_path)
+    logger.info("Wrote %d pairs to %s", len(unique_pairs), output_path)
+
+    # Print category breakdown.
+    cats: dict[str, int] = {}
+    for pair in unique_pairs:
+        c = pair.metadata.get("category", "unknown")
+        cats[c] = cats.get(c, 0) + 1
+    print(f"\nCollected {len(unique_pairs)} pairs from GitHub issues")
+    print(f"API calls made: {client._request_count}")
+    print(f"Rate limit remaining: {client._rate_limit_remaining}")
+    print("Category breakdown:")
+    for cat, count in sorted(cats.items()):
+        print(f"  {cat}: {count}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Collect GitHub issues training pairs")
+    parser = argparse.ArgumentParser(
+        description="Collect GitHub issues training pairs for k8s-sage"
+    )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("ml/dataset/data/gh_issues.jsonl"),
+        default=DEFAULT_OUTPUT,
+        help="Output JSONL file path",
     )
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable debug logging",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -313,7 +537,7 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-    collect_all(args.output)
+    collect_all(args.output, verbose=args.verbose)
 
 
 if __name__ == "__main__":
