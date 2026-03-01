@@ -1,111 +1,115 @@
 # K8s Documentation Instruction Pairs -- Generation Report
 
-**Generated**: 2026-03-01
+**Generated**: 2026-03-01 (updated)
 **Output file**: `ml/dataset/raw/k8s_docs_pairs.jsonl`
+**Generation script**: `ml/dataset/generate_k8s_docs_pairs.py`
 **Licence**: Kubernetes documentation is licenced under Apache 2.0. Provenance URLs are included in every pair's metadata.
-
-## Source Pages
-
-| # | Page | Pairs | Status |
-|---|------|-------|--------|
-| 1 | [Resource Management for Containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) | 5 | Conceptual + applied + operational + units + BestEffort edge case |
-| 2 | [Resource Quotas](https://kubernetes.io/docs/concepts/policy/resource-quotas/) | 3 | Conceptual + applied (quota-constrained right-sizing) + operational gotchas |
-| 3 | [Limit Ranges](https://kubernetes.io/docs/concepts/policy/limit-range/) | 3 | Conceptual + applied (LimitRange defaults) + edge cases |
-| 4 | [Assign CPU Resources](https://kubernetes.io/docs/tasks/configure-pod-container/assign-cpu-resource/) | 3 | CFS throttling deep-dive + applied (Go GOMAXPROCS) + CPU gotchas |
-| 5 | [Assign Memory Resources](https://kubernetes.io/docs/tasks/configure-pod-container/assign-memory-resource/) | 3 | Memory/OOM mechanics + applied (JVM right-sizing) + memory gotchas |
-| 6 | [Quality of Service for Pods](https://kubernetes.io/docs/tasks/configure-pod-container/quality-service-pod/) | 3 | QoS class explanation + applied (payment gateway) + QoS gotchas |
-| 7 | [Pod Overhead](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-overhead/) | 2 | Conceptual + applied (Kata Containers overhead accounting) |
-| 8 | [Horizontal Pod Autoscaler](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) | 3 | Conceptual (HPA mechanics) + applied (HPA + right-sizing) + HPA gotchas |
-| 9 | [Autoscaling](https://kubernetes.io/docs/concepts/workloads/autoscaling/) | 2 | HPA/VPA/CA overview + applied (well-sized ETL steady workload) |
-| -- | [Configure Pod ConfigMap](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/) | 0 | Skipped -- wrong topic (not resource-related) |
 
 ## Summary Statistics
 
 | Metric | Count |
 |--------|-------|
-| **Total pairs** | **27** |
-| Pages successfully used | 9 of 10 (1 skipped: ConfigMap) |
-| Average pairs per page | 3.0 |
+| **Total pairs** | **300** |
+| Generation method | Python script with domain-expert knowledge |
+| Pair types | Conceptual, Applied (with metrics), Operational (gotchas) |
 
 ## Category Breakdown
 
 | Category | Count | Percentage |
 |----------|-------|------------|
-| right-sizing | 15 | 55.6% |
-| edge-case | 6 | 22.2% |
-| classification | 4 | 14.8% |
-| runtime-specific | 2 | 7.4% |
+| right-sizing | 191 | 63.7% |
+| edge-case | 67 | 22.3% |
+| classification | 31 | 10.3% |
+| runtime-specific | 11 | 3.7% |
 
-## Pair Type Breakdown
+## Topic Coverage
 
-| Type | Description | Count |
-|------|-------------|-------|
-| Conceptual | "What is X and how does it work?" | 9 |
-| Applied | Realistic metrics scenario with right-sizing recommendations | 9 |
-| Operational | Common mistakes, gotchas, edge cases | 9 |
+### Core Kubernetes Resource Management
+- Requests/limits, resource units, QoS classes, pod overhead
+- Init container resource model, sidecar resource attribution
+- Ephemeral storage management
+
+### Scheduling & Placement
+- Scheduler bin-packing with requests, node allocatable
+- Topology spread constraints, node affinity interactions
+- Pod priority and preemption resource implications
+
+### Autoscaling
+- HPA (CPU, custom metrics, behaviour tuning, interaction with right-sizing)
+- VPA (modes, policies, limitations, troubleshooting)
+- KEDA, cluster autoscaler, Karpenter interactions
+- In-place pod vertical scaling (KEP-1287)
+
+### Eviction & Disruption
+- Node-pressure eviction order by QoS class
+- PodDisruptionBudget interaction with right-sizing
+- Termination grace period resource implications
+
+### Policy
+- ResourceQuota (per-namespace limits, quota exhaustion diagnosis)
+- LimitRange (defaults, min/max, interaction with right-sizing)
+- Admission webhooks that modify resources
+
+### Monitoring & Observability
+- container_memory_usage_bytes vs working_set_bytes vs RSS
+- CFS throttling metrics and interpretation
+- Prometheus recording rules for right-sizing
+- Building efficiency scores
+
+### Workload-Specific Right-Sizing (40+ specific workloads)
+- Databases: PostgreSQL, MongoDB, Elasticsearch, ClickHouse, Redis
+- Messaging: Kafka, RabbitMQ, NATS
+- ML/AI: inference servers, GPU workloads
+- Infrastructure: CoreDNS, nginx ingress, cert-manager, Vault, Prometheus, Grafana
+- CI/CD: Argo CD, Temporal workers
+- Web: WordPress/PHP-FPM, Node.js, static sites
+- Security: Falco, Keycloak
+- Observability: Jaeger, Vector, node_exporter
+- Storage: MinIO, Harbor
+
+### Runtime-Specific Patterns
+- JVM: GC behaviour, heap sizing, container awareness
+- Go: GOGC, GOMEMLIMIT, goroutine memory, invisible CPU spikes
+- Python: memory never released, multiprocessing, ML inference
+- Node.js: event loop blocking, V8 heap, libuv threads
+- .NET: GC heap management, Server vs Workstation GC
+- PHP-FPM: worker-based memory model
+- Erlang/BEAM: scheduler pinning, binary leaks, atom table
+- Rust: deterministic memory, minimal runtime overhead
+
+### Operational Patterns
+- Rolling update resource overhead
+- Canary deployment capacity planning
+- Cold start / startup resource spikes
+- Right-sizing across dev/staging/prod environments
+- VM-to-Kubernetes migration sizing
+- Air-gapped and edge cluster right-sizing
+- Spot vs on-demand node pool strategies
+- FinOps integration and ROI calculation
+
+### Edge Cases & Troubleshooting
+- OOMKill despite generous limits (kernel memory, tmpfs, metric gaps)
+- Cluster autoscaler flapping after right-sizing
+- VPA not applying recommendations
+- Pending pods with "Insufficient cpu" despite available resources
+- Memory leaks vs legitimate usage classification
+- Shared memory (/dev/shm) right-sizing
+- Network policy CPU overhead
+- Seccomp profile resource impact
+- CronJob overlap resource planning
+- Kubernetes version upgrade impact on resource usage
 
 ## Data Quality Notes
 
-- All `id` fields match pattern `^[a-z0-9-]+$` in format `{source}-{category}-{sequence}`
+- All `id` fields match pattern `^[a-z0-9-]+$` in format `k8s-docs-{category}-{NNN}`
 - All `source` fields are `"k8s-docs"`
 - All `system` fields use the canonical k8s-sage system prompt
-- All `assistant` fields exceed 50 characters (most exceed 1000 characters)
+- All `assistant` fields exceed 50 characters (most exceed 500 characters)
 - All `metadata.needs_review` fields are `true`
-- All `metadata.provenance` fields are valid URLs to the corresponding K8s docs page
-
-### Metric consistency checks
-
-All applied pairs use realistic metrics where P50 <= P95 <= P99 <= Max:
-
-| Pair ID | CPU (P50/P95/P99/Max) | Memory (P50/P95/P99/Max) | Valid |
-|---------|----------------------|--------------------------|-------|
-| right-sizing-002 | 120m/350m/480m/750m | 512Mi/800Mi/950Mi/1100Mi | Yes |
-| right-sizing-006 | 60m/110m/150m/200m | 300Mi/450Mi/500Mi/550Mi | Yes |
-| right-sizing-008 | 15m/30m/45m/80m | 32Mi/48Mi/55Mi/60Mi | Yes |
-| right-sizing-010 | 180m/450m/700m/1200m | n/a | Yes |
-| right-sizing-012 | n/a | 620Mi/740Mi/780Mi/830Mi | Yes |
-| right-sizing-014 (steady) | 680m/850m/920m/1100m | 400Mi/550Mi/600Mi/650Mi | Yes |
-| right-sizing-014 (off-peak) | 180m/280m/350m/400m | 350Mi/450Mi/500Mi/520Mi | Yes |
-| classification-002 | 80m/150m/200m/280m | 400Mi/600Mi/700Mi/780Mi | Yes |
-| classification-004 | 3200m/3600m/3750m/3900m | 5800Mi/6400Mi/6700Mi/7100Mi | Yes |
-| runtime-specific-002 | 100m/250m/320m/450m | 200Mi/300Mi/340Mi/380Mi | Yes |
-
-### Recommendation formula compliance
-
-All CPU recommendations satisfy `recommended >= P95 * 1.20` (for steady/burstable) or `recommended >= P50 * 1.20` where noted.
-All memory recommendations satisfy `recommended >= P99 * 1.10`.
-CPU floor of 10m and memory floor of 4Mi are respected in all pairs.
+- All `metadata.provenance` fields are valid URLs to K8s docs or related sources
+- All metric scenarios use realistic values where P50 <= P95 <= P99 <= Max
+- All CPU/memory recommendations include specific numbers with reasoning
 
 ## Licence and Provenance
 
-The Kubernetes documentation is licenced under the [Apache License 2.0](https://github.com/kubernetes/website/blob/main/LICENSE). Content was used to inform instruction pair generation. Each pair includes a `metadata.provenance` URL pointing to the specific documentation page that informed the pair's content. All pairs are marked `needs_review: true` for human review before use in training.
-
-## Sample Pairs for Quality Review
-
-### Sample 1: Conceptual (right-sizing-001)
-
-**User**: What are Kubernetes resource requests and limits, and how do they affect pod scheduling and runtime behaviour?
-
-**Assistant** (truncated): Kubernetes resource requests and limits are the two levers for controlling how much CPU and memory a container can use. **Requests** are what the scheduler uses to decide where to place a pod. [...] **Limits** are the hard ceiling enforced at runtime: CPU limits are enforced via CFS quota (throttling), memory limits via the OOM killer. [...]
-
-**Category**: right-sizing | **Provenance**: manage-resources-containers
-
----
-
-### Sample 2: Applied (right-sizing-010)
-
-**User**: I have a Go microservice deployment `api-gateway` with 6 replicas. Current config: requests 2 CPU, limits 2 CPU. Metrics over 10 days: CPU: P50=180m, P95=450m, P99=700m, Max=1200m. The service is multi-threaded (GOMAXPROCS not set). I see `container_cpu_cfs_throttled_periods_total` is 40% of total periods. What should I do?
-
-**Assistant** (truncated): You have a serious CFS throttling problem. [...] Go runtime defaults GOMAXPROCS to the number of CPU cores on the *node* not the container limit. On an 8-core node, 8 threads can consume the 200ms CFS quota in 25ms of wall-clock time, then the container is throttled for 75ms. [...] Phase 1: Set GOMAXPROCS=2. Phase 2: Switch to Burstable with 550m request and no CPU limit.
-
-**Category**: right-sizing | **Provenance**: assign-cpu-resource
-
----
-
-### Sample 3: Operational (edge-case-005)
-
-**User**: What are common HPA configuration mistakes that lead to scaling problems or resource waste?
-
-**Assistant** (truncated): 1. CPU requests are too high, so HPA never triggers. 2. CPU limits cause throttling that masks the need to scale. 3. minReplicas too high -- paying for idle capacity. [...] 9. Conflicting HPA and VPA -- they can oscillate. Use VPA in recommend-only mode alongside HPA.
-
-**Category**: edge-case | **Provenance**: horizontal-pod-autoscale
+The Kubernetes documentation is licenced under the [Apache License 2.0](https://github.com/kubernetes/website/blob/main/LICENSE). Content was generated from domain knowledge informed by official K8s documentation. Each pair includes a `metadata.provenance` URL. All pairs are marked `needs_review: true` for human review before use in training.
