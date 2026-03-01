@@ -1,0 +1,608 @@
+#!/usr/bin/env python3
+"""Generate VPA-source instruction-tuning pairs for k8s-sage.
+
+Translates VPA recommender algorithm concepts, right-sizing logic, and
+operational patterns into natural language instruction pairs. Source material:
+the VPA recommender algorithm, VPA documentation, and k8s-sage rules engine.
+
+Output: ml/dataset/raw/vpa_source_pairs.jsonl
+"""
+
+import json
+from pathlib import Path
+
+SYSTEM_PROMPT = (
+    "You are k8s-sage, a Kubernetes resource efficiency specialist. "
+    "Analyse the provided workload metrics and give actionable right-sizing "
+    "recommendations. Be specific about numbers, explain your reasoning, "
+    "and flag risks."
+)
+
+OUTPUT_PATH = Path(__file__).parent / "raw" / "vpa_source_pairs.jsonl"
+
+
+def make_pair(
+    id_str: str, user: str, assistant: str, category: str,
+    provenance: str, **extra_meta
+) -> dict:
+    """Create a validated training pair."""
+    assert len(assistant) >= 50, f"{id_str}: assistant too short ({len(assistant)} chars)"
+    assert category in ("right-sizing", "classification", "runtime-specific", "edge-case")
+    meta = {"category": category, "provenance": provenance, "needs_review": True}
+    meta.update(extra_meta)
+    return {
+        "id": id_str,
+        "source": "vpa-source",
+        "system": SYSTEM_PROMPT,
+        "user": user,
+        "assistant": assistant,
+        "metadata": meta,
+    }
+
+
+# ── Percentile Estimation ────────────────────────────────────────────
+
+
+def percentile_estimation_pairs() -> list[dict]:
+    """Pairs about percentile selection for CPU and memory."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-001",
+            "Why does VPA use P95 for CPU recommendations but P99 for memory?",
+            "## Asymmetric Percentile Selection\n\n**The cost of being wrong differs for CPU vs memory:**\n\n**CPU under-provisioning** → CFS throttling → latency increase. Bad but not fatal. Pod continues running.\n**Memory under-provisioning** → OOMKill → pod termination → service disruption. Much worse.\n\nTherefore:\n- **CPU**: P95 provides good performance for 95% of time periods. The 5% that exceeds can burst (if limits allow) or accept brief throttling.\n- **Memory**: P99 is safer because even rare spikes can trigger OOMKill. The cost of the extra 4% headroom (P99 vs P95) is small compared to the cost of an OOM.\n\n**Numeric example:**\n- CPU usage distribution: P50=200m, P95=450m, P99=800m, Max=1200m\n- Memory usage distribution: P50=300Mi, P95=500Mi, P99=700Mi, Max=900Mi\n\nRecommendation:\n- CPU request: 450m (P95) + 20% headroom = 540m\n- Memory request: 700Mi (P99) + 15% headroom = 805Mi\n\nIf we used P95 for memory (500Mi + 15% = 575Mi), the pod would OOMKill during any of the 5% of periods where usage exceeds 575Mi.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-002",
+            "When should I use P50 instead of P95/P99 for right-sizing?",
+            "## When P50 Is Appropriate\n\n**P50 (median) is appropriate when:**\n\n1. **Batch/ephemeral workloads**: Jobs that run for minutes. Occasional over-usage just slows one run. No long-term impact.\n2. **Development environments**: Cost matters more than reliability. Occasional OOMKill is acceptable.\n3. **Workloads with HPA**: HPA adds replicas during spikes. Per-pod resource doesn't need to handle peak.\n4. **Stateless services with fast startup**: OOMKill → restart in 2s → no user impact.\n\n**P50 is dangerous when:**\n- Stateful workloads (data corruption on OOMKill)\n- Single-replica deployments (no redundancy)\n- Latency-sensitive services (throttling = SLA breach)\n- Services with slow startup (5+ minutes to recover)\n\n**The math:**\nP50 means 50% of time periods exceed this value. For a workload with 1-minute measurement intervals running 24/7:\n- P50: ~720 over-budget minutes/day\n- P95: ~72 over-budget minutes/day\n- P99: ~14.4 over-budget minutes/day\n\n**Recommendation**: Use P50 for Tier 3/dev workloads, P95 for Tier 2, P99 for Tier 1.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-003",
+            "My workload has a bi-modal distribution — P50 is 100m CPU but P99 is 2000m CPU. How should I right-size?",
+            "## Bi-Modal Distribution Right-Sizing\n\n**A 20x difference between P50 and P99 indicates two distinct operating modes**, not a smooth distribution. Common causes:\n- Periodic batch processing alongside request handling\n- Cache rebuild after restart\n- Report generation on a schedule\n\n**Standard percentile-based sizing fails here:**\n- P50 (100m): Constant throttling during batch mode\n- P99 (2000m): 20x over-provisioned during normal mode\n- Any single number is wrong for one of the two modes\n\n**Solutions:**\n\n1. **Separate workloads**: Split batch and request handling into different deployments.\n   - Request handler: 150m request (P95 of normal mode)\n   - Batch processor: 2500m request (P95 of batch mode)\n   - Total cost lower because batch only runs during processing.\n\n2. **Burstable with no CPU limit**:\n   - Request: 150m (P95 of dominant mode)\n   - No CPU limit (allow burst to 2000m+)\n   - Works if node has headroom during batch periods.\n\n3. **HPA + moderate sizing**:\n   - Request: 500m (compromise)\n   - HPA scales up during batch mode based on CPU or custom metric.\n\n**k8s-sage approach**: Detect bi-modal via coefficient of variation (CV > 1.5). Report both modes separately with individual recommendations.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-004",
+            "How do I calculate percentiles from a Prometheus histogram for right-sizing?",
+            "## Percentile Calculation from Prometheus Histograms\n\n**Prometheus stores histograms as cumulative bucket counters.** Percentile extraction requires interpolation.\n\n**Step 1: Get the histogram data**\n```promql\nhistogram_quantile(0.95,\n  rate(container_cpu_usage_seconds_total_bucket[1h])\n)\n```\nNote: `container_cpu_usage_seconds_total` is NOT a histogram. CPU usage is a counter. For CPU percentiles, use recording rules to build a histogram.\n\n**Step 2: Build a CPU usage histogram via recording rules**\n```yaml\ngroups:\n- name: cpu-histogram\n  interval: 1m\n  rules:\n  - record: pod:cpu_usage_percentile:p50\n    expr: quantile_over_time(0.50, rate(container_cpu_usage_seconds_total{container!=\"POD\"}[5m])[1h:1m])\n  - record: pod:cpu_usage_percentile:p95\n    expr: quantile_over_time(0.95, rate(container_cpu_usage_seconds_total{container!=\"POD\"}[5m])[1h:1m])\n  - record: pod:cpu_usage_percentile:p99\n    expr: quantile_over_time(0.99, rate(container_cpu_usage_seconds_total{container!=\"POD\"}[5m])[1h:1m])\n```\n\n**Step 3: Use for right-sizing**\n```promql\n# Recommended CPU request (P95 + 20% headroom)\npod:cpu_usage_percentile:p95 * 1.2\n```\n\n**Accuracy note**: `quantile_over_time` computes exact quantiles from samples. More accurate than histogram_quantile (which interpolates between buckets). Use 1m resolution for 1h windows, 5m for 24h windows.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-005",
+            "How does the VPA recommender handle workloads with very few data points?",
+            "## VPA Cold Start and Low-Data Recommendations\n\n**VPA requires a minimum data window before making recommendations.** With too few samples, percentile estimates are unreliable.\n\n**VPA's approach:**\n1. **Minimum 8 samples** needed before any recommendation. With default 1-minute scrape interval, that's 8 minutes minimum.\n2. **Confidence increases with data**: VPA internally tracks a confidence metric based on sample count and distribution stability.\n3. **Short history → wider bounds**: VPA's lower bound is more conservative (higher) with less data, to avoid under-provisioning.\n\n**Problem scenarios:**\n- CronJob running 5 minutes daily: Only ~5 samples per run. VPA recommendation based on partial data.\n- New deployment: First 8 minutes may include startup spike, skewing recommendation high.\n- Infrequent scaling events: Pod created, runs 10 minutes, deleted. VPA checkpoint has limited data.\n\n**k8s-sage mitigations:**\n1. **Minimum observation window**: Require 24h of data before generating recommendations. Flag shorter windows.\n2. **Startup detection**: Exclude first N minutes of pod lifetime from percentile calculation.\n3. **Cross-pod aggregation**: For Deployments with multiple replicas, aggregate data across all pods for faster convergence.\n4. **Confidence scoring**: Report low/medium/high confidence. Low = <24h data or <100 samples. Medium = 24h-7d. High = 7d+ with stable pattern.\n\n**Recommendation**: Wait for 7 days of data for high-confidence recommendations. Use 24h data only for quick estimates with clear caveats.",
+            "right-sizing", p),
+    ]
+
+
+# ── Pattern Classification ───────────────────────────────────────────
+
+
+def pattern_classification_pairs() -> list[dict]:
+    """Pairs about workload pattern detection and classification."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-classification-001",
+            "How do you classify a workload as steady, burstable, batch, or idle?",
+            "## Workload Pattern Classification Algorithm\n\n**Classification uses coefficient of variation (CV) and utilization level.**\n\nCV = standard_deviation / mean. Measures how variable the usage is.\n\n**Decision tree:**\n```\n1. Calculate mean utilization = mean(usage) / request\n2. If mean_utilization < 0.05:\n   → IDLE (using <5% of requested resources)\n3. Calculate CV of usage over observation window\n4. If CV < 0.3:\n   → STEADY (low variability, consistent usage)\n5. If CV >= 0.3 AND CV < 1.0:\n   → BURSTABLE (moderate variability, spikes above baseline)\n6. If CV >= 1.0:\n   → BATCH (high variability, alternates between near-zero and high usage)\n```\n\n**Examples:**\n| Workload | Mean CPU | Std Dev | CV | Classification |\n|----------|---------|---------|-----|---------------|\n| Database | 400m | 80m | 0.20 | Steady |\n| Web API | 200m | 150m | 0.75 | Burstable |\n| CronJob | 500m | 600m | 1.20 | Batch |\n| Dev tool | 10m | 5m | 0.50 | Idle (mean <5%) |\n\n**Why it matters for right-sizing:**\n- Steady: Size to P95. Tight headroom is safe.\n- Burstable: Size to P95 but allow burst (no CPU limit). Wider headroom.\n- Batch: Size for peak usage period. Consider separating batch from steady.\n- Idle: Flag for decommissioning or scale-to-zero.",
+            "classification", p),
+
+        make_pair("vpa-source-classification-002",
+            "How does the observation window length affect pattern classification?",
+            "## Observation Window Impact on Classification\n\n**Shorter windows are more sensitive to recent patterns. Longer windows smooth out anomalies.**\n\n**Trade-offs:**\n\n| Window | Pros | Cons |\n|--------|------|------|\n| 1 hour | Catches real-time changes | Noise-sensitive, misclassifies spikes as pattern changes |\n| 24 hours | Good for daily patterns | Misses within-day transitions |\n| 7 days | Captures weekly patterns | Slow to detect pattern changes |\n| 30 days | Very stable classification | Outdated if workload changed 2 weeks ago |\n\n**VPA uses a decay-weighted approach:**\nRecent data weighted more heavily (24h half-life). This implicitly shortens the effective window to ~3-5 days while retaining some historical context.\n\n**k8s-sage approach:**\n1. **Primary window**: 7 days. Captures full weekly cycle.\n2. **Trend detection**: Compare 7d classification with 24h classification.\n   - Same → Stable pattern.\n   - Different → Pattern transition. Report both with confidence.\n3. **Minimum window**: 24 hours required. Less than 24h → insufficient data, no classification.\n\n**Example**: Web API is steady Mon-Fri (CV=0.25) but idle on weekends (usage drops 90%).\n- 24h window on Monday: Steady\n- 24h window on Saturday: Idle\n- 7d window: Burstable (CV=0.6 due to weekend drop)\n- **Best answer**: Report as \"bi-modal: steady weekday, idle weekend\"",
+            "classification", p),
+
+        make_pair("vpa-source-classification-003",
+            "My deployment has 5 containers. Two are steady, one is burstable, two are idle. How should it be classified?",
+            "## Multi-Container Pattern Classification\n\n**Each container in a pod may have a different pattern.** The pod-level classification must account for all containers.\n\n**Approach:**\n1. Classify each container independently.\n2. Pod-level classification = the most demanding pattern.\n\n**Priority order** (most to least demanding):\n1. Batch (needs peak capacity periodically)\n2. Burstable (needs headroom for spikes)\n3. Steady (predictable sizing)\n4. Idle (candidate for removal)\n\n**Your case:**\n- 2 steady + 1 burstable + 2 idle → Pod classification: **Burstable**\n\n**Right-sizing implications:**\n- Steady containers: Size to their P95 individually.\n- Burstable container: Size request to P95, no CPU limit.\n- Idle containers: Flag for review. Are they needed?\n  - Sidecar that initialised but does nothing → Remove or reduce to floor (10m/32Mi).\n  - Log shipper with low traffic → Normal, keep at floor.\n\n**Pod total request** = sum of all container requests. The burstable container drives the pod's need for burst capacity.\n\n**VPA handles this correctly**: VPA generates per-container recommendations. It will recommend minimal resources for idle containers and appropriate resources for each pattern.\n\n**k8s-sage improvement**: Report per-container classification AND pod-level summary. Highlight idle containers as potential savings.",
+            "classification", p),
+
+        make_pair("vpa-source-classification-004",
+            "What metrics indicate a workload is transitioning from steady to burstable?",
+            "## Pattern Transition Detection\n\n**A stable workload becoming burstable signals a real change** (new traffic pattern, code change, data growth) that should trigger re-right-sizing.\n\n**Detection signals:**\n\n1. **CV trending upward:**\n```promql\n# 7-day rolling CV\nstddev_over_time(rate(container_cpu_usage_seconds_total[5m])[7d:5m])\n/ avg_over_time(rate(container_cpu_usage_seconds_total[5m])[7d:5m])\n```\nCV moving from <0.3 to >0.3 over 2+ weeks = real transition.\n\n2. **P95/P50 ratio increasing:**\n- Steady: P95/P50 ≈ 1.2-1.5\n- Burstable: P95/P50 ≈ 2.0-5.0\n- Batch: P95/P50 > 5.0\n\nTrack this ratio weekly. Sharp increase = pattern change.\n\n3. **New traffic spikes appearing:**\n```promql\n# Count of periods where usage > 2x average (per day)\ncount_over_time((rate(container_cpu_usage_seconds_total[5m]) > 2 * avg_over_time(rate(container_cpu_usage_seconds_total[5m])[7d:5m]))[1d:5m])\n```\nIncreasing spike count = becoming burstable.\n\n**Action on transition:**\n1. Re-calculate percentiles with recent data (last 7d, not 30d).\n2. Add headroom for burst capacity (increase from 15% to 25%).\n3. Consider removing CPU limits if not already removed.\n4. Evaluate HPA if bursts are traffic-driven.\n\n**Alert rule:**\n```yaml\n- alert: WorkloadPatternChange\n  expr: sage:deployment_cv_7d > 0.3 AND sage:deployment_cv_7d offset 14d < 0.3\n  for: 7d\n```",
+            "classification", p),
+
+        make_pair("vpa-source-classification-005",
+            "How do you detect and handle a workload that alternates between two distinct steady states?",
+            "## Bi-Modal Steady State Detection\n\n**Some workloads have two distinct operating modes**, both internally stable:\n- Business hours (high throughput, steady) vs off-hours (low throughput, steady)\n- With-cache vs without-cache (after restart)\n- Primary vs standby mode in an active-passive setup\n\n**Detection:**\nStandard CV would classify this as burstable, but the workload is actually two overlapping steady-state distributions.\n\n**Algorithm:**\n1. Collect usage samples over 7 days.\n2. Run a simple clustering (k-means with k=2).\n3. If the two clusters are well-separated (distance > 2x combined std), workload is bi-modal.\n4. Calculate CV within each cluster. If both < 0.3, it's \"bi-modal steady\".\n\n**Example:**\n- Cluster 1 (business hours): mean=800m, std=100m, CV=0.125 → Steady\n- Cluster 2 (off-hours): mean=100m, std=30m, CV=0.30 → Borderline steady\n- Overall: mean=450m, std=380m, CV=0.84 → Would be classified as burstable (WRONG)\n\n**Right-sizing for bi-modal:**\n1. Size request to P95 of the HIGHER mode (business hours): 800m * 1.2 = 960m\n2. Use HPA to scale replicas down during off-hours (reduce total cost).\n3. Don't average the two modes — that under-sizes for business and over-sizes for off-hours.\n\n**k8s-sage reports**: \"Bi-modal pattern detected. Business hours: 800m ± 100m. Off-hours: 100m ± 30m. Recommend request 960m with HPA for off-hours scaling.\"",
+            "classification", p),
+    ]
+
+
+# ── OOM Handling ─────────────────────────────────────────────────────
+
+
+def oom_handling_pairs() -> list[dict]:
+    """Pairs about OOM detection, bump-up logic, and memory safety."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-edge-case-001",
+            "How does VPA's OOM bump-up algorithm work?",
+            "## VPA OOM Bump-Up Logic\n\n**When a container is OOMKilled, VPA doesn't just increase the recommendation — it applies a specific bump-up algorithm.**\n\n**Algorithm:**\n1. On OOMKill event, VPA records the container's memory limit at time of kill.\n2. New recommendation = max(current_recommendation, oom_limit * bump_up_ratio)\n3. Default bump_up_ratio = 1.2 (20% above the OOM'd limit).\n4. If OOMKill repeats: ratio compounds. Second OOM: 1.2 * 1.2 = 1.44x original limit.\n\n**Example:**\n- Container limit: 512Mi\n- OOMKilled at 512Mi usage\n- VPA new target: max(P99_recommendation, 512Mi * 1.2) = max(P99, 614Mi)\n- If P99 recommendation was 400Mi, VPA bumps to 614Mi (OOM takes precedence).\n- If OOMKilled again at 614Mi: 614Mi * 1.2 = 737Mi.\n\n**Safeguards:**\n- Bump-up is capped by maxAllowed (if set in VPA spec).\n- Bump-up decays over time if no further OOMs (normal decay half-life applies).\n- VPA distinguishes OOMKill from other termination reasons (only reacts to OOM signal 137).\n\n**k8s-sage approach:**\n- Same bump-up logic but with additional context.\n- If 3+ OOMKills with increasing limits: flag as \"possible memory leak\" instead of continuing to bump up.\n- Report bump-up history so operators can see the trend.",
+            "edge-case", p),
+
+        make_pair("vpa-source-edge-case-002",
+            "How do I distinguish between 'needs more memory' and 'has a memory leak' after repeated OOMKills?",
+            "## OOMKill: Under-Provisioned vs Memory Leak\n\n**Both produce the same symptom (OOMKill) but require opposite responses.**\n\n**Under-provisioned**: Increase memory. Workload stabilizes at new level.\n**Memory leak**: Increasing memory just delays the next OOMKill. Workload always grows to fill available memory.\n\n**Diagnosis algorithm:**\n\n1. **Track time-to-OOM after each restart:**\n   - Under-provisioned: Time-to-OOM is RANDOM (depends on traffic pattern).\n   - Memory leak: Time-to-OOM is CONSISTENT (proportional to growth rate and available memory).\n\n2. **Track memory at OOM:**\n   - Under-provisioned: OOM happens at different memory levels (varies with traffic).\n   - Memory leak: OOM always happens near the limit.\n\n3. **Plot memory over time:**\n   - Under-provisioned: Usage plateaus below limit, then spikes during high traffic → OOM.\n   - Memory leak: Linear growth from restart until OOM. Clear upward slope.\n\n4. **Increase limit and observe:**\n   - Under-provisioned: Usage stabilizes at a level below new limit.\n   - Memory leak: Usage continues growing linearly to new limit → OOM again (just takes longer).\n\n**Metric to track:**\n```promql\npredict_linear(container_memory_working_set_bytes[1h], 3600)\n```\nIf predicted value in 1h > limit AND the growth is linear (R² > 0.9), likely a leak.\n\n**k8s-sage response:**\n- If leak detected: \"Memory leak suspected. Increasing limits will only delay OOMKill. Fix application code. As temporary mitigation, add a liveness probe that restarts the pod at 80% memory utilization.\"\n- If under-provisioned: \"Increase memory request to [P99 + headroom].\"",
+            "edge-case", p),
+
+        make_pair("vpa-source-edge-case-003",
+            "A container OOMKills at 1Gi limit, but container_memory_working_set_bytes shows only 700Mi. What's consuming the missing 300Mi?",
+            "## Hidden Memory Consumers in OOMKill\n\n**Container memory cgroup includes more than just application memory.**\n\nTotal cgroup memory = RSS + page cache + kernel memory + tmpfs\n\nBut `container_memory_working_set_bytes` ≈ RSS + active page cache (not inactive page cache, not all kernel memory).\n\n**The 300Mi gap could be:**\n\n1. **Kernel memory (kmem):**\n   - Network buffers (sk_buff): High-connection-count services accumulate socket buffers. 10K connections × 16KB = 160Mi.\n   - inotify watches: File-watching processes (log shippers, config reloaders).\n   - cgroup metadata: Overhead of cgroup tracking itself.\n\n2. **tmpfs / emptyDir Memory:**\n   - `emptyDir` with `medium: Memory` counts against cgroup.\n   - `/dev/shm` (shared memory) used by databases, ML frameworks.\n\n3. **Inactive page cache:**\n   - Not in working_set but still in cgroup total.\n   - File I/O generates page cache. Reclaimable but counts toward limit.\n\n4. **Memory-mapped files:**\n   - `mmap()` files count toward cgroup. JVM class data, Lucene indices.\n\n**Diagnosis:**\n```bash\n# Inside the container:\ncat /sys/fs/cgroup/memory/memory.stat\n# Look for: cache, rss, mapped_file, pgfault, kmem\n\n# Or from host:\ncat /sys/fs/cgroup/memory/kubepods/pod<uid>/memory.stat\n```\n\n**Fix**: Increase memory limit by the hidden consumption amount. If kernel memory is the culprit, reduce connection count or use connection pooling.",
+            "edge-case", p),
+
+        make_pair("vpa-source-edge-case-004",
+            "What memory safety margin should I apply for different application types?",
+            "## Memory Safety Margins by Application Type\n\n**Safety margin = multiplier above measured P99 to prevent OOMKill.**\n\nThe margin must account for:\n- Measurement gap (metrics sample every 15-60s, peak may be missed)\n- GC overhead (memory spikes during collection)\n- Traffic spikes (more concurrent requests = more memory)\n- Kernel memory overhead (not fully captured in metrics)\n\n**Recommended margins:**\n\n| Application Type | Margin | Reasoning |\n|-----------------|--------|----------|\n| JVM (fixed heap) | 30% above Xmx | Metaspace + thread stacks + native memory |\n| JVM (dynamic heap) | 25% above P99 | GC can spike memory during compaction |\n| Go | 20% above P99 | GOGC causes 2x live heap, but predictable |\n| Python | 35% above P99 | Never releases memory, fragmentation grows |\n| Node.js | 25% above P99 | V8 GC spikes, Buffer allocations |\n| Rust/C++ | 15% above P99 | Deterministic memory, minimal overhead |\n| Ruby | 40% above P99 | Extreme fragmentation, never releases |\n| Database (e.g., PostgreSQL) | 10% above configured buffers | Memory is explicitly configured, predictable |\n| ML inference | 10% above model size + batch | Model size is constant, batch size bounded |\n\n**Formula:**\n```\nmemory_limit = P99_usage * (1 + safety_margin)\nmemory_request = memory_limit * 0.9  # Request slightly below limit\n```\n\n**Why request < limit**: Allows brief burst above request without affecting scheduling. Limit prevents OOMKill.",
+            "edge-case", p),
+
+        make_pair("vpa-source-edge-case-005",
+            "How does VPA handle cascading OOMKills across multiple pods in a deployment?",
+            "## Cascading OOM Prevention\n\n**Scenario**: Pod A OOMKills → traffic shifts to Pods B, C, D → they get more load → more memory → they OOMKill → cascade.\n\n**VPA's behavior:**\n- VPA reacts per-container, not per-deployment. It bumps up the recommendation for the OOMKilled container.\n- VPA updater restarts pods one at a time (respects PDB).\n- But if OOMKills happen faster than VPA can react (admission webhook applies new limits on restart), the cascade continues.\n\n**VPA limitations during cascade:**\n1. VPA recommender runs every ~1 minute. OOM cascade can happen in seconds.\n2. VPA updater has a max update rate to avoid disruption. May be too slow.\n3. New pods get the bumped-up recommendation only on restart. Running pods keep old limits.\n\n**Mitigation strategies:**\n\n1. **Pre-provision headroom**: Memory limit = P99 * 1.5 (not 1.15). Higher cost, but prevents cascade.\n2. **PodDisruptionBudget**: `minAvailable: 50%`. Prevents VPA updater from restarting too many pods during OOM storm.\n3. **HPA buffer**: If traffic-driven, HPA should have headroom (target: 60% not 80%). More pods = less memory per pod.\n4. **Circuit breaker**: Application-level: reject requests when memory > 80% of limit. Fail fast rather than OOM.\n5. **Memory request = limit (Guaranteed QoS)**: Prevents kernel from over-committing. More predictable OOM behavior.\n\n**k8s-sage approach**: Detect OOM cascade pattern (3+ OOMKills in same deployment within 10 minutes). Alert with severity=critical and recommend immediate memory limit increase.",
+            "edge-case", p),
+    ]
+
+
+# ── Headroom & Safety ────────────────────────────────────────────────
+
+
+def headroom_safety_pairs() -> list[dict]:
+    """Pairs about headroom calculation and safety margins."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-006",
+            "Why is 20% headroom the standard recommendation for CPU right-sizing?",
+            "## The 20% CPU Headroom Rationale\n\n**20% is a pragmatic balance between cost and reliability.** Here's the derivation:\n\n**Factor 1: Measurement lag**\nMetrics are sampled every 15-60s. Actual peak between samples may be 5-10% higher than recorded peak.\n\n**Factor 2: Traffic variability**\nEven steady workloads have micro-bursts. A web server at P95=400m might hit 480m for sub-second bursts.\n\n**Factor 3: CFS period granularity**\nCFS enforces limits per 100ms period. A workload that uses 500m average but bursts to 600m within a single period gets throttled.\n\n**Combined**: 5% measurement + 8% micro-burst + 5% CFS + 2% safety = ~20%.\n\n**When to adjust:**\n- **Reduce to 10-15%**: Steady workloads with CV < 0.15, long history (30d+), non-latency-sensitive.\n- **Increase to 25-30%**: Burstable workloads, latency-sensitive services, low-replica-count deployments.\n- **Increase to 40%+**: Single-replica critical services, workloads without HPA.\n\n**Math example:**\n- P95 CPU usage: 400m\n- 20% headroom: 400m * 1.2 = 480m → CPU request\n- Cost of headroom: 80m * $24/core/month / 1000 = $1.92/month per pod\n- Cost of under-sizing: CFS throttling → P99 latency increase → SLA breach → much more than $1.92\n\n**Headroom is insurance.** The premium (extra cost) should be proportional to the risk (impact of under-sizing).",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-007",
+            "Should I use the same headroom percentage for CPU and memory?",
+            "## CPU vs Memory Headroom\n\n**No. Memory needs LESS percentage headroom but on a HIGHER percentile.**\n\n**CPU headroom:**\n- Applied to P95\n- Typically 15-25%\n- Under-provisioning = throttling (performance degradation, not failure)\n- Can burst above request if node has capacity\n\n**Memory headroom:**\n- Applied to P99 (higher percentile)\n- Typically 10-20%\n- Under-provisioning = OOMKill (pod termination)\n- Cannot burst above limit (hard kill)\n\n**Why less percentage on memory:**\nMemory is already at P99 (more conservative base). Adding 25% headroom on P99 would be extremely conservative.\n\nP99 of memory already captures 99% of usage. The additional 10-20% covers:\n- Kernel memory overhead (~50Mi for most workloads)\n- GC spikes (JVM: up to 30% of heap during full GC)\n- Metric sampling gaps\n\n**Combined formula:**\n```\ncpu_request = cpu_P95 * 1.20  # 20% headroom on P95\nmemory_request = memory_P99 * 1.15  # 15% headroom on P99\nmemory_limit = memory_request * 1.10  # 10% above request for brief spikes\n```\n\n**Pattern-specific adjustments:**\n- Steady: CPU 15%, Memory 10%\n- Burstable: CPU 25%, Memory 15%\n- Batch: CPU 10% (peak is the norm), Memory 20% (peaks may not be fully captured)",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-008",
+            "How do I calculate headroom for a deployment with HPA?",
+            "## Headroom with HPA\n\n**HPA provides collective headroom by adding replicas. Per-pod headroom can be reduced.**\n\n**Without HPA:**\nEach pod must handle any traffic spike alone → needs generous headroom.\n```\ncpu_request = P95 * 1.25  # 25% headroom\n```\n\n**With HPA (targeting 70% utilization):**\nHPA maintains 30% spare capacity across the deployment collectively. Per-pod headroom can be tighter:\n```\ncpu_request = P95 * 1.10  # 10% headroom (HPA handles the rest)\n```\n\n**But watch for HPA lag:**\nHPA scales in 15-30s + pod startup 10-60s. During this window, existing pods must absorb the spike.\n\nEffective headroom needed = HPA_reaction_time * traffic_ramp_rate\n\n**Example:**\n- 10 replicas at P95=500m each\n- HPA targets 70% utilization\n- Scale-up time: 45s (detection + pod start)\n- Traffic can double in 30s\n\nDuring scale-up lag, each of 10 pods may see up to 1000m (doubled traffic).\nSo: cpu_request = 500m * 1.20 = 600m (enough to handle ~1000m with burst).\n\n**Memory with HPA:**\nHPA doesn't help with memory. Each pod still needs P99 + headroom individually. Memory per pod doesn't decrease with more replicas (unless you're aggregating less data per pod).\n\n**Summary:**\n- CPU with HPA: Reduce per-pod headroom from 20-25% to 10-15%.\n- Memory with HPA: Keep full headroom (15-20%).\n- Account for HPA reaction time in CPU headroom calculation.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-009",
+            "How should headroom differ between development, staging, and production environments?",
+            "## Environment-Specific Headroom\n\n**Different environments have different cost-vs-risk trade-offs.**\n\n| Environment | CPU Headroom | Memory Headroom | Reasoning |\n|------------|-------------|-----------------|----------|\n| Production (Tier 1) | 25-40% on P99 | 20-30% on P99 | Downtime costs real money. Over-provision for safety. |\n| Production (Tier 2-3) | 15-25% on P95 | 10-20% on P99 | Standard right-sizing. |\n| Staging | 10-15% on P95 | 10-15% on P95 | Needs enough to run realistic tests. |\n| Dev/Preview | 5-10% on P50 | 10% on P95 | Minimize cost. OOMKill is OK. |\n| CI/CD runners | 0% on P95 | 10% on P99 | Short-lived. CPU throttling = slower build (acceptable). Memory OOM = build failure (not acceptable). |\n\n**Why production gets more headroom:**\n1. Traffic patterns not fully captured in metrics (flash sales, viral events)\n2. Multiple failures compounding (node failure + traffic spike)\n3. Cost of outage >> cost of over-provisioning\n\n**Implementation via Helm values:**\n```yaml\n# values-prod.yaml\nresources:\n  headroomCPU: 1.25    # 25% headroom\n  headroomMemory: 1.20  # 20% headroom\n  percentileCPU: 0.99   # Higher percentile for prod\n  percentileMemory: 0.99\n\n# values-dev.yaml\nresources:\n  headroomCPU: 1.05\n  headroomMemory: 1.10\n  percentileCPU: 0.50   # Median is fine for dev\n  percentileMemory: 0.95\n```",
+            "right-sizing", p),
+    ]
+
+
+# ── Confidence Scoring ───────────────────────────────────────────────
+
+
+def confidence_scoring_pairs() -> list[dict]:
+    """Pairs about recommendation confidence and data quality."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-010",
+            "How should I score confidence in a right-sizing recommendation?",
+            "## Recommendation Confidence Scoring\n\n**Not all recommendations are equally trustworthy.** Confidence scoring helps operators decide which to act on.\n\n**Confidence factors:**\n\n1. **Data window length** (0-40 points):\n   - <24h: 5 points\n   - 24h-72h: 15 points\n   - 3d-7d: 25 points\n   - 7d-30d: 35 points\n   - 30d+: 40 points\n\n2. **Pattern stability** (0-30 points):\n   - CV change < 10% over window: 30 points\n   - CV change 10-25%: 20 points\n   - CV change 25-50%: 10 points\n   - CV change > 50%: 0 points (pattern unstable)\n\n3. **Sample count** (0-20 points):\n   - <50 samples: 5 points\n   - 50-500: 10 points\n   - 500-5000: 15 points\n   - 5000+: 20 points\n\n4. **OOMKill history** (0-10 points):\n   - No OOMKills in window: 10 points\n   - 1-2 OOMKills: 5 points (data may be incomplete)\n   - 3+ OOMKills: 0 points (need to stabilize first)\n\n**Total score interpretation:**\n- 80-100: **High confidence**. Apply recommendation.\n- 50-79: **Medium confidence**. Apply with monitoring.\n- 25-49: **Low confidence**. Review manually before applying.\n- 0-24: **Insufficient data**. Collect more data before acting.\n\n**k8s-sage reports confidence with every recommendation**: \"CPU recommendation: 450m (confidence: 82/100 — HIGH). Based on 14d of data, steady pattern, 2800 samples, no OOMKills.\"",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-011",
+            "How does data staleness affect recommendation quality?",
+            "## Data Staleness and Recommendation Decay\n\n**Kubernetes workloads change. Data from 30 days ago may not represent current behavior.**\n\n**VPA's solution: Exponential decay**\nEach sample gets weight: `w = 2^(-age / halfLife)`. Default halfLife = 24h.\n\n| Sample Age | Weight | Influence |\n|-----------|--------|----------|\n| 1 hour | 0.97 | Full influence |\n| 12 hours | 0.71 | Strong influence |\n| 24 hours | 0.50 | Half influence |\n| 3 days | 0.125 | Weak influence |\n| 7 days | 0.0078 | Negligible |\n\n**Implication**: VPA effectively uses only the last 2-3 days of data, even with a 30-day history.\n\n**When this helps:**\n- Workload changed 3 days ago (new version deployed). Old data quickly fades.\n- Traffic pattern shifted. New pattern dominates within 48h.\n\n**When this hurts:**\n- Weekly patterns: Weekend data faded by Wednesday. VPA misses the weekly cycle.\n- Monthly patterns: Month-end batch processing not captured after day 3.\n\n**k8s-sage approach:**\n- Use 7-day window with uniform weighting (no decay). Captures full weekly cycle.\n- Provide separate \"recent trend\" (24h) for operators to compare.\n- Flag divergence: \"7-day recommendation: 450m. 24h trend: 650m. Workload may be changing.\"",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-012",
+            "How many data points do I need for a reliable P99 estimate?",
+            "## Sample Size for Reliable Percentile Estimation\n\n**P99 is inherently harder to estimate than P50 because fewer data points fall in the tail.**\n\n**Statistical requirements:**\n- P50: ~100 samples for ±10% accuracy\n- P95: ~500 samples for ±10% accuracy\n- P99: ~2,000 samples for ±10% accuracy\n- P99.9: ~20,000 samples for ±10% accuracy\n\n**In Kubernetes terms** (1-minute scrape interval):\n- P50: 100 min ≈ 1.7 hours\n- P95: 500 min ≈ 8.3 hours\n- P99: 2,000 min ≈ 33 hours\n- P99.9: 20,000 min ≈ 14 days\n\n**For multi-replica deployments**, aggregate across pods:\n- 10 replicas × 1-minute interval × 24 hours = 14,400 samples/day\n- Reliable P99 with 10 replicas: ~3.3 hours\n- Single replica: ~33 hours\n\n**k8s-sage minimum requirements:**\n| Percentile | Min Data Window | Min Samples |\n|-----------|----------------|------------|\n| P50 | 2 hours | 100 |\n| P95 | 12 hours | 500 |\n| P99 | 48 hours | 2,000 |\n\n**Below minimum**: Report with explicit warning: \"P99 estimate based on 800 samples (need 2,000). Confidence: LOW. Recommendation may underestimate peaks.\"\n\n**Above minimum**: Standard confidence scoring applies.",
+            "right-sizing", p),
+    ]
+
+
+# ── Decay & History ──────────────────────────────────────────────────
+
+
+def decay_history_pairs() -> list[dict]:
+    """Pairs about VPA's half-life mechanism and history handling."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-013",
+            "How does VPA's exponential decay work, and when should I tune the half-life?",
+            "## VPA Exponential Decay Mechanism\n\n**VPA uses half-life decay to weight recent data more than old data.**\n\n**Default half-life: 24 hours** (configurable via `--cpu-histogram-decay-half-life` and `--memory-histogram-decay-half-life`).\n\n**How it works:**\nEvery minute, VPA adds a sample to the histogram. The weight of each sample decays exponentially:\n```\nweight(age) = 2^(-age_minutes / (halfLife_minutes))\n```\n\nAt default 24h half-life (1440 minutes):\n- Sample from 1h ago: 2^(-60/1440) = 0.97 (97% weight)\n- Sample from 24h ago: 2^(-1440/1440) = 0.50 (50% weight)\n- Sample from 72h ago: 2^(-4320/1440) = 0.125 (12.5% weight)\n\n**When to change:**\n\n| Scenario | Half-Life | Reasoning |\n|----------|----------|----------|\n| Default (most workloads) | 24h | Good balance of responsiveness and stability |\n| Rapidly changing workloads | 12h | Faster adaptation to new patterns |\n| Weekly patterns | 72-168h | Preserves weekend/weekday data |\n| Stable services (databases) | 48-72h | Resists noise, stable recommendations |\n\n**Configuration:**\n```bash\n# On VPA recommender deployment\ncontainers:\n- name: recommender\n  args:\n  - --cpu-histogram-decay-half-life=48h\n  - --memory-histogram-decay-half-life=24h\n```\n\n**Note**: CPU and memory can have different half-lives. Memory changes less frequently than CPU, so a shorter memory half-life is usually unnecessary.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-014",
+            "What happens to VPA recommendations when a pod restarts? Does it lose history?",
+            "## VPA Checkpoint Persistence\n\n**VPA does NOT lose history on pod restart.** Recommendations are persisted in VPA checkpoint objects.\n\n**How checkpoints work:**\n1. VPA recommender periodically (every ~1 min) writes histogram state to a `VerticalPodAutoscalerCheckpoint` custom resource.\n2. When recommender restarts, it reads checkpoints to restore state.\n3. When a managed pod restarts, the admission webhook reads the current recommendation from the VPA object (not the checkpoint directly) and applies it.\n\n**What IS lost:**\n- In-memory samples since last checkpoint write (up to ~1 minute of data).\n- Negligible impact.\n\n**What causes recommendation to change on restart:**\n1. **Pod restarts with new resource spec**: If deployment was updated with new requests, VPA re-evaluates.\n2. **VPA recommender restarts**: Loads from checkpoint. May recalculate slightly differently due to floating-point precision.\n3. **Checkpoint corruption**: If etcd had issues and checkpoint is lost, VPA starts fresh. Watch for sudden recommendation changes.\n\n**Monitoring checkpoint health:**\n```bash\nkubectl get verticalpodautoscalercheckpoints -A\n# Verify timestamps are recent (within last 5 minutes)\n```\n\n**Edge case**: If you delete and recreate a VPA object with the same name, checkpoints from the old VPA are NOT automatically used. The new VPA starts fresh.\n\n**k8s-sage difference**: k8s-sage doesn't use VPA checkpoints. It queries Prometheus directly each time, so it's stateless and always uses current data.",
+            "right-sizing", p),
+    ]
+
+
+# ── Container Policies ───────────────────────────────────────────────
+
+
+def container_policy_pairs() -> list[dict]:
+    """Pairs about VPA modes, policies, and configuration."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-015",
+            "What are the differences between VPA's UpdateMode settings (Off, Initial, Recreate, Auto)?",
+            "## VPA UpdateMode Comparison\n\n| Mode | Creates recommendations? | Applies on new pods? | Updates running pods? | Risk Level |\n|------|------------------------|--------------------|--------------------|------------|\n| **Off** | Yes | No | No | None |\n| **Initial** | Yes | Yes | No | Low |\n| **Recreate** | Yes | Yes | Yes (by evicting) | Medium |\n| **Auto** | Yes | Yes | Yes (by evicting OR in-place) | Medium-High |\n\n**Detailed behavior:**\n\n**Off**: Recommendation-only. VPA computes recommendations but never modifies pods. Use for monitoring, manual right-sizing, or as input to k8s-sage.\n\n**Initial**: Applies recommendation only when pods are first created (e.g., after deployment rollout, scale-up). Running pods keep their original resources. Safe for gradual rollout.\n\n**Recreate**: Evicts pods when recommendation changes significantly. VPA updater respects PDB. New pod gets updated resources via admission webhook. Production risk: pod disruption during update.\n\n**Auto**: Same as Recreate today. In the future, will use in-place resize (KEP-1287) when available, avoiding pod restart. Currently no difference from Recreate.\n\n**Recommendation by use case:**\n- Learning about a workload: **Off**\n- Non-disruptive gradual improvement: **Initial** (apply on next rollout)\n- Fully automated optimization: **Auto** (with PDB and monitoring)\n- CI/CD environments (disposable): **Recreate** (disruption is OK)\n\n**Best practice**: Start with Off. After validating recommendations match expectations, move to Initial. Only move to Auto for Tier 3 workloads after 2+ weeks of successful Initial results.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-016",
+            "How do I configure VPA's minAllowed and maxAllowed for different workload types?",
+            "## VPA Resource Bounds Configuration\n\n**minAllowed** and **maxAllowed** constrain VPA recommendations to safe ranges.\n\n**Without bounds**: VPA might recommend 5m CPU for a web server (too low, connection timeouts) or 64Gi memory for a small app (wasteful).\n\n**Guidelines by workload type:**\n\n```yaml\n# Web API\nresourcePolicy:\n  containerPolicies:\n  - containerName: api\n    minAllowed: {cpu: 50m, memory: 64Mi}    # Floor: below this, app can't function\n    maxAllowed: {cpu: \"4\", memory: 8Gi}     # Ceiling: beyond this, scale horizontally\n\n# JVM application\n  - containerName: java-app\n    minAllowed: {cpu: 200m, memory: 512Mi}  # JVM needs minimum for class loading\n    maxAllowed: {cpu: \"4\", memory: 16Gi}   # Cap at node capacity\n\n# Sidecar (istio-proxy)\n  - containerName: istio-proxy\n    minAllowed: {cpu: 10m, memory: 40Mi}    # Minimum viable Envoy\n    maxAllowed: {cpu: \"1\", memory: 512Mi}   # Sidecar shouldn't dominate pod\n    mode: Auto                              # Sidecars are safe to auto-size\n\n# Database\n  - containerName: postgres\n    controlledResources: [cpu]              # VPA manages CPU only\n    # Memory is manually configured via shared_buffers\n```\n\n**Setting maxAllowed:**\n- For horizontally-scaled services: maxAllowed = point where adding replicas is better than bigger pods\n- For single-replica services: maxAllowed = node allocatable / 2 (leave room for other pods)\n- General rule: maxAllowed = 10x current request (if VPA wants more, something is wrong)\n\n**Setting minAllowed:**\n- Test the app at minimum resources. What's the lowest it can function?\n- JVM: at least Xmx + 30% overhead\n- Most apps: 50m CPU, 64Mi memory is a reasonable floor",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-017",
+            "How does VPA's controlledResources setting work for managing CPU-only or memory-only?",
+            "## VPA controlledResources\n\n**controlledResources lets you choose which resources VPA manages.** Default: both CPU and memory.\n\n```yaml\nresourcePolicy:\n  containerPolicies:\n  - containerName: app\n    controlledResources: [cpu]  # VPA only manages CPU. Memory is manual.\n```\n\n**When to use CPU-only:**\n- JVM with fixed heap (-Xms == -Xmx): Memory is deterministic, VPA adds no value.\n- Databases with configured buffers: PostgreSQL shared_buffers, Redis maxmemory.\n- Cache-heavy apps: Memory always near maxmemory by design.\n- VPA + HPA on CPU: VPA manages per-pod CPU, HPA scales replicas on custom metric.\n\n**When to use memory-only:**\n- Services where CPU throttling is acceptable but OOMKill is not.\n- Latency-insensitive batch processors.\n- Combined with HPA on CPU utilization.\n\n**Impact:**\n- Uncontrolled resource: VPA still COMPUTES a recommendation (visible in `status.recommendation`) but does NOT apply it.\n- Useful for monitoring: \"VPA recommends 2Gi memory even though I set 4Gi\" → you're over-provisioning memory by 2x.\n\n**Common pattern — VPA for vertical, HPA for horizontal:**\n```yaml\n# VPA manages memory vertically\ncontrolledResources: [memory]\n# HPA manages CPU horizontally\nmetrics:\n- type: Resource\n  resource: {name: cpu, target: {type: Utilization, averageUtilization: 70}}\n```\nThis avoids the VPA+HPA conflict on CPU while still optimizing memory.",
+            "right-sizing", p),
+    ]
+
+
+# ── Risk Assessment ──────────────────────────────────────────────────
+
+
+def risk_assessment_pairs() -> list[dict]:
+    """Pairs about risk evaluation in right-sizing recommendations."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-018",
+            "How do I quantify the risk of applying a right-sizing recommendation?",
+            "## Right-Sizing Risk Quantification\n\n**Risk = Probability of adverse event × Impact of that event.**\n\n**For CPU reduction:**\n- Probability = P(usage > new_request) during any 100ms CFS period\n- Impact = CFS throttling → latency increase. Quantify: (throttled_periods / total_periods) × latency_sensitivity_multiplier\n\n**For memory reduction:**\n- Probability = P(usage > new_limit) at any point\n- Impact = OOMKill → pod restart → downtime. Quantify: (OOMKill_probability) × (restart_time) × (revenue_per_second)\n\n**Risk score calculation:**\n```\ncpu_risk = P(usage > new_request) × latency_impact_score\nmemory_risk = P(usage > new_limit) × pod_criticality_score\ntotal_risk = max(cpu_risk, memory_risk)  # Either dimension can cause problems\n```\n\n**Example:**\n- Current: CPU request 2000m, usage P95=300m, P99=500m, Max=1200m\n- Recommendation: CPU request 360m (P95 * 1.2)\n- P(usage > 360m) ≈ 8% of time periods (based on historical distribution)\n- CFS throttling impact: ~5% latency increase during throttled periods\n- Risk score: 0.08 × 0.05 = 0.004 (LOW)\n\n- Recommendation: CPU request 250m (P50 * 1.25, too aggressive)\n- P(usage > 250m) ≈ 55% of time periods\n- Risk score: 0.55 × 0.30 = 0.165 (HIGH)\n\n**k8s-sage thresholds:**\n- Risk < 0.01: GREEN — safe to apply\n- Risk 0.01-0.05: YELLOW — apply with monitoring\n- Risk > 0.05: RED — review before applying",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-019",
+            "How do I calculate the asymmetric risk between CPU throttling and memory OOM?",
+            "## Asymmetric Risk: CPU vs Memory\n\n**The key insight: CPU under-provisioning degrades gracefully. Memory under-provisioning fails catastrophically.**\n\n**CPU throttling (graceful degradation):**\n- Pod continues running\n- Latency increases proportionally to throttling percentage\n- Self-healing: when load drops, throttling stops\n- Impact: 10-50% latency increase typically\n- Recovery time: instant (no restart needed)\n\n**Memory OOM (catastrophic failure):**\n- Pod is killed immediately (SIGKILL, no graceful shutdown)\n- In-flight requests lost\n- State lost (if not externally persisted)\n- Impact: 100% failure for that pod's traffic\n- Recovery time: pod restart (10s to 5min depending on startup)\n\n**Risk ratio**: Memory OOM is roughly 10-100x worse than equivalent CPU throttling.\n\n**Implication for right-sizing:**\n```\ncpu_recommendation = P95 * 1.15   # Can be somewhat aggressive\nmemory_recommendation = P99 * 1.25  # Must be conservative\n```\n\nPut differently:\n- Acceptable to throttle CPU 5% of the time (P95 handles 95%)\n- NOT acceptable to OOM even 1% of the time (P99 + headroom)\n\n**Decision framework:**\nIf forced to choose between:\n- Option A: 10% CPU throttling + 0% OOM risk\n- Option B: 0% CPU throttling + 0.5% OOM risk\n→ Always choose Option A. The throttling is much less damaging.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-edge-case-006",
+            "How do I assess right-sizing risk for a deployment with only 2 replicas?",
+            "## Low-Replica Risk Assessment\n\n**Fewer replicas = higher impact per pod failure.** Right-sizing must be more conservative.\n\n**Impact multiplier by replica count:**\n\n| Replicas | Impact of 1 OOMKill | Headroom Multiplier |\n|----------|--------------------|---------|\n| 1 | 100% traffic loss | 1.5x standard |\n| 2 | 50% traffic loss | 1.3x standard |\n| 3-4 | 25-33% traffic loss | 1.15x standard |\n| 5-9 | 10-20% traffic loss | 1.0x standard |\n| 10+ | <10% traffic loss | 0.9x standard (can be tighter) |\n\n**For your 2-replica deployment:**\n```\ncpu_request = P95 * 1.20 * 1.30 = P95 * 1.56\nmemory_request = P99 * 1.15 * 1.30 = P99 * 1.50\n```\n\n**Additional safeguards for 2 replicas:**\n1. **PDB mandatory**: `minAvailable: 1` ensures at least one pod always runs.\n2. **Pod anti-affinity**: Spread across nodes. Both pods on same node = single point of failure.\n3. **No VPA Auto**: Use recommendation-only. Manual application during maintenance window.\n4. **Staged rollout**: Apply to 1 pod, observe 24h, apply to second.\n\n**Cost comparison:**\n| Approach | CPU Request | Extra Cost | Risk |\n|----------|-----------|-----------|------|\n| Standard (P95*1.2) | 480m | Baseline | OOMKill = 50% loss |\n| Conservative (P95*1.56) | 624m | +30% | Much safer |\n| Add 3rd replica instead | 480m × 3 | +50% | Best reliability |\n\nOften, adding a 3rd replica is better than over-provisioning 2 replicas.",
+            "edge-case", p),
+    ]
+
+
+# ── Waste Detection ──────────────────────────────────────────────────
+
+
+def waste_detection_pairs() -> list[dict]:
+    """Pairs about detecting and quantifying resource waste."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-020",
+            "What threshold constitutes 'waste' in Kubernetes resource requests?",
+            "## Defining Waste Thresholds\n\n**Waste = requested resources - actual usage. But not all 'waste' should be eliminated.**\n\n**Healthy allocation includes headroom.** A pod using 80% of its request is well-sized, not wasteful.\n\n**Waste thresholds:**\n\n| Request/Usage Ratio | Classification | Action |\n|-------------------|---------------|--------|\n| 1.0-1.2x | Under-provisioned | INCREASE resources |\n| 1.2-1.5x | Well-sized | No action needed |\n| 1.5-2.0x | Slightly over-provisioned | Monitor, low priority |\n| 2.0-3.0x | Over-provisioned | Right-size (medium priority) |\n| 3.0-5.0x | Significantly over-provisioned | Right-size (high priority) |\n| 5.0-10x | Grossly over-provisioned | Immediate right-sizing |\n| >10x | Waste | Investigate — may be misconfigured or abandoned |\n\n**Context matters:**\n- 3x over-provisioned database (Tier 1) with known traffic spikes → acceptable\n- 3x over-provisioned dev environment → wasteful\n- 10x over-provisioned with zero traffic → abandoned workload\n\n**k8s-sage waste calculation:**\n```\nwaste_cpu = max(0, cpu_request - cpu_P95 * 1.2)  # After P95 + 20% headroom\nwaste_memory = max(0, memory_request - memory_P99 * 1.15)  # After P99 + 15% headroom\nwaste_score = waste_cpu / cpu_request + waste_memory / memory_request\n```\nwaste_score > 0.5 (50%+ resources are waste) → flag for right-sizing.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-021",
+            "How do I calculate cluster-wide resource efficiency?",
+            "## Cluster Efficiency Metrics\n\n**Three levels of efficiency:**\n\n### 1. Allocation Efficiency (Scheduler perspective)\n```promql\nallocation_efficiency_cpu = sum(kube_pod_container_resource_requests{resource=\"cpu\"})\n                          / sum(kube_node_status_allocatable{resource=\"cpu\"})\n```\nHow much of the cluster's allocatable capacity is assigned to pods.\nTarget: 70-85%. Below 70% = too many nodes. Above 85% = scheduling pressure.\n\n### 2. Utilization Efficiency (Actual usage)\n```promql\nutilization_efficiency_cpu = sum(rate(container_cpu_usage_seconds_total{container!=\"POD\"}[5m]))\n                           / sum(kube_node_status_allocatable{resource=\"cpu\"})\n```\nHow much of the cluster's capacity is actually being used.\nTarget: 40-65%. Below 30% = significant waste. Above 70% = running hot.\n\n### 3. Request Accuracy (Right-sizing quality)\n```promql\nrequest_accuracy_cpu = sum(rate(container_cpu_usage_seconds_total{container!=\"POD\"}[5m]))\n                     / sum(kube_pod_container_resource_requests{resource=\"cpu\"})\n```\nHow close are requests to actual usage.\nTarget: 50-80%. Below 30% = over-provisioned. Above 90% = under-provisioned.\n\n**The gap between allocation and utilization is the right-sizing opportunity:**\n```\nright_sizing_opportunity = allocation_efficiency - utilization_efficiency\n```\nExample: 80% allocated, 30% utilized → 50% opportunity = 50% of resources could be freed by right-sizing.\n\n**In dollar terms:**\n```\nmonthly_savings_potential = cluster_cost * right_sizing_opportunity * 0.7\n# 0.7 factor: can't capture 100% of opportunity (need headroom)\n```",
+            "right-sizing", p),
+
+        make_pair("vpa-source-classification-006",
+            "How do I distinguish between intentional over-provisioning and accidental waste?",
+            "## Intentional vs Accidental Over-Provisioning\n\n**Not all over-provisioning is waste.** Some is deliberate safety margin.\n\n**Signs of INTENTIONAL over-provisioning:**\n1. Request/usage ratio is 1.5-2.5x (reasonable headroom, not extreme)\n2. Workload is Tier 1/critical (payment, auth)\n3. Workload has known spike patterns not captured in metrics\n4. Team documented the sizing rationale\n5. ResourceQuota or LimitRange sets minimums deliberately\n\n**Signs of ACCIDENTAL waste:**\n1. Request/usage ratio > 5x (extreme over-provisioning)\n2. Resources match Helm chart defaults (nobody customized)\n3. Team says \"we copied it from another service\"\n4. Resources haven't changed in 6+ months despite workload changes\n5. Dev environment has same resources as production\n6. Pod has never come close to its limits (max usage < 30% of request)\n\n**Detection algorithm:**\n```\nif request_to_usage_ratio > 5:\n  classification = \"likely_accidental\"\nelif request_to_usage_ratio > 3 AND resources_unchanged_days > 90:\n  classification = \"likely_stale\"  # Set-and-forget\nelif resources == helm_chart_defaults:\n  classification = \"default_not_tuned\"\nelse:\n  classification = \"intentional_or_unknown\"\n```\n\n**k8s-sage reports the classification** so operators can prioritize:\n- accidental: Immediate action, high savings\n- stale: Medium priority, needs fresh data collection\n- default: Quick win, compare defaults to actuals\n- intentional: Document and skip (or review periodically)",
+            "classification", p),
+    ]
+
+
+# ── Recommendation Limits ────────────────────────────────────────────
+
+
+def recommendation_limits_pairs() -> list[dict]:
+    """Pairs about floors, ceilings, and rate limiting recommendations."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-022",
+            "What are sensible floor values for CPU and memory requests?",
+            "## Resource Request Floors\n\n**Even idle containers need minimum resources to function.**\n\n**Recommended floors:**\n\n| Container Type | CPU Floor | Memory Floor | Reasoning |\n|---------------|----------|-------------|----------|\n| Web server (nginx, httpd) | 10m | 32Mi | Serve at least 1 request |\n| Application container | 50m | 64Mi | Minimum for startup + health checks |\n| JVM application | 200m | 256Mi | JVM overhead even when idle |\n| Sidecar (Envoy/istio-proxy) | 10m | 40Mi | Minimum viable proxy |\n| Log shipper (fluent-bit) | 10m | 32Mi | Minimal tailing |\n| Init container | 50m | 64Mi | Needs to complete reasonably fast |\n\n**Why floors matter:**\n1. **Scheduler signals**: Request of 1m CPU means scheduler thinks 100 pods fit on 100m CPU. This over-packs nodes.\n2. **QoS protection**: Very low requests = Burstable QoS with low priority. First to be evicted.\n3. **Startup**: Pod with 5m CPU request takes forever to start (slow class loading, slow config parsing).\n\n**VPA respects minAllowed:**\n```yaml\nresourcePolicy:\n  containerPolicies:\n  - containerName: '*'\n    minAllowed:\n      cpu: 50m\n      memory: 64Mi\n```\nEven if VPA recommends 5m CPU, the applied value will be 50m.\n\n**k8s-sage floors** are applied automatically. Recommendations never go below:\n- CPU: 10m (absolute minimum for any container)\n- Memory: 32Mi (absolute minimum for any container)\nWith runtime-specific floors applied on top (JVM: 200m/256Mi, etc.).",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-023",
+            "How do I rate-limit right-sizing changes to prevent churn?",
+            "## Right-Sizing Change Rate Limiting\n\n**Frequent resource changes cause pod restarts (via VPA) and operational noise.** Changes should be batched and throttled.\n\n**VPA's built-in rate limiting:**\n- VPA updater checks every 1 minute.\n- Only evicts a pod if the recommendation differs from current by > threshold (default: 10% for CPU, 10% for memory).\n- Respects PDB: won't evict if it would violate disruption budget.\n- Maximum evictions per minute: configurable (default: unlimited but PDB-constrained).\n\n**Additional rate limiting strategies:**\n\n1. **Minimum change threshold**: Only apply changes > 20% of current value. Ignore small fluctuations.\n```\nif abs(new_recommendation - current_request) / current_request < 0.20:\n  skip  # Change too small to justify disruption\n```\n\n2. **Change windows**: Only apply changes during maintenance windows (weekly, after business hours).\n\n3. **Cool-down period**: After applying a change, wait 48h before another change to the same workload. Allows the new sizing to stabilize.\n\n4. **Batch changes**: Collect recommendations for 7 days, then apply all changes in one maintenance window.\n\n**k8s-sage approach:**\n- Recommendation frequency: Real-time (always available via API).\n- Application frequency: Configurable (default: weekly batch).\n- Minimum change: 15% of current request.\n- Cool-down: 72h after any change.\n- Emergency override: OOMKill detected → immediate recommendation update.",
+            "right-sizing", p),
+    ]
+
+
+# ── VPA Internals ────────────────────────────────────────────────────
+
+
+def vpa_internals_pairs() -> list[dict]:
+    """Pairs about VPA architecture and internal mechanisms."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-024",
+            "What are the three VPA components and what does each do?",
+            "## VPA Architecture\n\n**VPA consists of three independent components:**\n\n### 1. Recommender\n**Function**: Watches pod metrics, computes resource recommendations.\n- Scrapes metrics from Metrics API (metrics-server) every ~1 minute.\n- Maintains per-container exponential histograms.\n- Computes percentile-based recommendations.\n- Writes recommendations to VPA status.\n- Persists state to VPA Checkpoint CRDs.\n\n**Sizing**: 500m CPU, 500Mi memory for <500 VPA objects. Scales linearly.\n\n### 2. Updater\n**Function**: Evicts pods that need resource updates.\n- Compares current pod resources with VPA recommendations.\n- If difference exceeds threshold, marks pod for eviction.\n- Respects PDB constraints.\n- Only active when updateMode is Recreate or Auto.\n\n**Sizing**: 200m CPU, 256Mi memory. Lightweight.\n\n### 3. Admission Controller (Webhook)\n**Function**: Mutates pod specs at creation time.\n- Runs as a mutating admission webhook.\n- When a new pod is created, checks if a matching VPA exists.\n- If yes, modifies the pod's resource requests to match VPA recommendation.\n- Critical path: if webhook is down, pods are created with original resources.\n\n**Sizing**: 200m CPU, 128Mi memory. Low-latency requirement.\n\n**Dependency**: Recommender → writes reco → Updater reads reco + evicts → Admission Controller reads reco + mutates new pods.\n\n**Failure modes:**\n- Recommender down: Stale recommendations, but existing pods unaffected.\n- Updater down: No auto-updates, but manual updates still work.\n- Webhook down: New pods get original resources, not VPA-adjusted.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-edge-case-007",
+            "VPA recommender shows a recommendation for my deployment, but new pods are not getting the updated resources. Why?",
+            "## VPA Not Applying Recommendations\n\n**Checklist for debugging:**\n\n### 1. Check updateMode\n```bash\nkubectl get vpa <name> -o jsonpath='{.spec.updatePolicy.updateMode}'\n```\n- **Off**: VPA never applies. This is by design.\n- **Initial**: Only applies on NEW pod creation. Existing pods keep old resources.\n- **Auto/Recreate**: Should apply. Continue debugging.\n\n### 2. Check admission webhook\n```bash\nkubectl get mutatingwebhookconfigurations | grep vpa\nkubectl get pods -n kube-system | grep vpa-admission\n```\nIf webhook pod is not running, pods won't get mutated.\n\n### 3. Check VPA targets the right deployment\n```bash\nkubectl get vpa <name> -o jsonpath='{.spec.targetRef}'\n```\nMust match the deployment name, apiVersion, and kind exactly.\n\n### 4. Check resourcePolicy\n```bash\nkubectl get vpa <name> -o yaml | grep -A20 resourcePolicy\n```\nIf `containerPolicies` has `mode: \"Off\"` for your container, VPA won't apply.\n\n### 5. Check minAllowed/maxAllowed\nIf recommendation is outside bounds, VPA clamps it. If clamped to current value, no change visible.\n\n### 6. Check PDB (for Recreate/Auto)\nIf PDB `minAvailable` equals current replicas, updater can't evict any pod.\n\n### 7. Check recommender logs\n```bash\nkubectl logs -n kube-system deployment/vpa-recommender | grep <deployment-name>\n```\nLook for errors about metrics access or unsupported resource types.\n\n**Most common cause**: updateMode is Off (people enable VPA for monitoring but forget to change mode when they want auto-apply).",
+            "edge-case", p),
+
+        make_pair("vpa-source-right-sizing-025",
+            "How does VPA interact with the Kubernetes scheduler for resource allocation?",
+            "## VPA and Scheduler Interaction\n\n**VPA modifies pod resource requests BEFORE scheduling.** This directly affects where pods are placed.\n\n**Flow:**\n1. Deployment creates a pod.\n2. VPA admission webhook intercepts the pod creation.\n3. Webhook modifies `containers[].resources.requests` to match VPA recommendation.\n4. Modified pod enters the scheduling queue.\n5. Scheduler uses the VPA-modified requests for bin-packing.\n\n**Implications:**\n\n1. **Node capacity planning**: If VPA increases requests, pods need bigger nodes.\n   - Before VPA: 10 pods × 200m CPU = 2 CPU requested → fits on small node.\n   - After VPA: 10 pods × 800m CPU = 8 CPU requested → needs larger node.\n   - Cluster autoscaler must scale up to accommodate.\n\n2. **Bin-packing changes**: VPA changing requests changes scheduler decisions.\n   - Tighter requests → more pods per node → better bin-packing.\n   - Larger requests → fewer pods per node → more nodes needed.\n\n3. **Scheduling failures**: If VPA recommends resources larger than any node's allocatable, pod stays Pending forever.\n   - Guard with maxAllowed: `maxAllowed.cpu < max_node_allocatable_cpu`.\n\n4. **Priority and preemption**: Larger requests may trigger preemption of lower-priority pods.\n\n**Monitoring the interaction:**\n```promql\n# Track scheduling latency after VPA changes\nscheduler_scheduling_duration_seconds\n# Track pending pods\nkube_pod_status_phase{phase=\"Pending\"}\n```\n\n**Best practice**: When enabling VPA Auto for the first time, watch for scheduling failures in the first hour. VPA may increase requests beyond current node capacity.",
+            "right-sizing", p),
+    ]
+
+
+# ── Multi-Resource & In-Place Resize ─────────────────────────────────
+
+
+def multi_resource_pairs() -> list[dict]:
+    """Pairs about joint CPU+memory recommendations and in-place resize."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-026",
+            "Should I right-size CPU and memory independently or together?",
+            "## Joint vs Independent Right-Sizing\n\n**CPU and memory are usually correlated but not always linearly.**\n\n**Independent sizing (recommended for most workloads):**\n- Calculate CPU recommendation from CPU usage data alone.\n- Calculate memory recommendation from memory usage data alone.\n- Apply both.\n\n**This works because:**\n- CPU usage is rate-based (cores/second). Memory is absolute (bytes at a point in time).\n- Their distributions differ: CPU is often burstable, memory is often steady.\n- Over-provisioning one doesn't automatically waste the other.\n\n**When they're correlated (size together):**\n- Worker pools: Each worker uses N CPU and M memory. More concurrent workers = more of both.\n- JVM: Heap size affects GC frequency, which affects CPU. Changing memory → CPU changes.\n- Data processing: Larger batches = more memory AND more CPU.\n\n**Joint sizing approach:**\n```\n# If CPU and memory are correlated (correlation > 0.7):\nconcurrency_metric = max(cpu_usage / per_unit_cpu, memory_usage / per_unit_memory)\ncpu_request = concurrency_metric * per_unit_cpu * 1.2\nmemory_request = concurrency_metric * per_unit_memory * 1.15\n```\n\n**k8s-sage approach:**\n1. Calculate correlation between CPU and memory time series.\n2. If correlation > 0.7: Report as correlated, provide joint recommendation.\n3. If correlation < 0.7: Independent recommendations for each.\n4. Always show both: \"CPU recommendation: 450m. Memory recommendation: 800Mi. Correlation: 0.82 (high — consider adjusting together).\"",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-027",
+            "How does in-place pod vertical scaling (KEP-1287) change right-sizing?",
+            "## In-Place Resize Impact on Right-Sizing\n\n**KEP-1287 (stable in K8s 1.30+)** allows changing container resources without restarting the pod.\n\n**Before in-place resize:**\n- VPA changes resources → pod must be evicted and recreated.\n- Disruption risk → conservative change frequency.\n- Result: Large, infrequent changes.\n\n**With in-place resize:**\n- Resources can be adjusted without pod restart (for CPU always, for memory if `restartPolicy: NotRequired`).\n- No disruption → can change more frequently.\n- Result: Smaller, more frequent adjustments.\n\n**New right-sizing strategies:**\n\n1. **Reactive scaling**: Detect traffic increase → immediately increase CPU request (no restart). Traffic drops → decrease. Like HPA but vertical.\n\n2. **Startup optimization**: Start with high CPU for fast initialization. Reduce after startup completes.\n```yaml\nresizePolicy:\n- resourceName: cpu\n  restartPolicy: NotRequired  # CPU changes: no restart\n- resourceName: memory\n  restartPolicy: RestartContainer  # Memory changes: still need restart\n```\n\n3. **Tighter sizing**: Because changes are fast and non-disruptive, headroom can be reduced.\n   - Before: P95 * 1.25 (needs buffer because changes are expensive)\n   - After: P95 * 1.10 (can react quickly to under-provisioning)\n\n**Limitations:**\n- Memory can only INCREASE in-place (shrinking requires restart on most runtimes).\n- Node must have capacity for the increase.\n- Not all runtimes handle dynamic memory changes (JVM needs restart for Xmx change).\n\n**k8s-sage support**: Detect in-place resize capability. If available, use tighter headroom and more frequent adjustments.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-edge-case-008",
+            "In-place resize shows 'Infeasible' status. What does that mean?",
+            "## In-Place Resize Infeasible Status\n\n**`Infeasible` means the node cannot accommodate the requested resize.**\n\n**Check resize status:**\n```bash\nkubectl get pod <pod> -o jsonpath='{.status.resize}'\n# Possible values: Proposed, InProgress, Deferred, Infeasible\n```\n\n**Causes of Infeasible:**\n\n1. **Node doesn't have capacity:**\n   - Current: 500m CPU. Resize to 2000m.\n   - Node allocatable: 4000m. Other pods: 3200m. Available: 800m. Need: 1500m more → Infeasible.\n   - Fix: Wait for other pods to be evicted, or move pod to larger node.\n\n2. **Resize exceeds limit:**\n   - Resize request: 2Gi memory. Pod limit: 1Gi.\n   - Can't have request > limit.\n   - Fix: Update both limit and request in the resize.\n\n3. **Resource quota exceeded:**\n   - Namespace quota: 10 CPU. Current usage: 9.5 CPU. Resize adds 1 CPU → 10.5 > 10.\n   - Fix: Free quota or increase quota.\n\n4. **LimitRange violation:**\n   - Resize to 50m CPU but LimitRange min is 100m.\n   - Fix: Adjust LimitRange or resize to at least minimum.\n\n**Deferred vs Infeasible:**\n- **Deferred**: Resize is possible but delayed (kubelet hasn't processed it yet).\n- **Infeasible**: Resize is impossible with current constraints.\n\n**Recovery:**\nInfeasible resizes don't automatically retry. Either:\n- Fix the constraint (free node resources, update quota).\n- Delete and recreate the pod (it gets scheduled on a node with capacity).\n- Accept current sizing until conditions change.",
+            "edge-case", p),
+    ]
+
+
+# ── Operational VPA ──────────────────────────────────────────────────
+
+
+def operational_vpa_pairs() -> list[dict]:
+    """Pairs about deploying and operating VPA in production."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-028",
+            "What's the recommended way to deploy VPA in a production cluster?",
+            "## VPA Production Deployment Guide\n\n**Phase 1: Recommendation-only (Week 1-2)**\n1. Install VPA components.\n2. Create VPA objects with `updateMode: Off` for ALL deployments.\n3. Observe recommendations via `kubectl describe vpa` or Prometheus metrics.\n4. Compare VPA recommendations with current requests.\n\n```yaml\napiVersion: autoscaling.k8s.io/v1\nkind: VerticalPodAutoscaler\nmetadata:\n  name: my-app-vpa\nspec:\n  targetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: my-app\n  updatePolicy:\n    updateMode: \"Off\"  # Observe only\n```\n\n**Phase 2: Validate (Week 3-4)**\n- Check: Are recommendations reasonable? (not 10x current, not 0.1x current)\n- Check: VPA admission webhook is healthy.\n- Check: VPA recommender isn't OOMing with many VPA objects.\n\n**Phase 3: Enable for Tier 3 (Month 2)**\n- Change to `updateMode: Auto` for dev/staging/internal tools.\n- Set minAllowed/maxAllowed for safety.\n- Ensure PDBs are in place.\n\n**Phase 4: Expand (Month 3+)**\n- Enable `Initial` mode for Tier 2 services (applies on next rollout).\n- Keep `Off` for Tier 1 (use recommendations for manual right-sizing).\n\n**Monitoring:**\n```promql\nvpa_recommender_recommendation_latency_seconds\nvpa_recommender_vpa_objects_count\nvpa_updater_evicted_pods_total\n```",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-029",
+            "How do I configure VPA recommender flags for better recommendations?",
+            "## VPA Recommender Flag Tuning\n\n**Key flags and their effects:**\n\n```yaml\ncontainers:\n- name: recommender\n  args:\n  # Decay half-life (default: 24h)\n  - --cpu-histogram-decay-half-life=48h      # Slower decay = more stable recs\n  - --memory-histogram-decay-half-life=24h   # Memory changes less, keep default\n  \n  # Recommendation margins (default: 0.15 for CPU, 0.15 for memory)\n  - --recommendation-margin-fraction=0.15    # Applied on top of percentile\n  \n  # OOM bump-up ratio (default: 1.2)\n  - --oom-bump-up-ratio=1.3                  # More aggressive OOM response\n  \n  # Minimum recommendation (default: 25m CPU, 250Mi memory)\n  - --pod-recommendation-min-cpu-millicores=50\n  - --pod-recommendation-min-memory-mb=64\n  \n  # Target CPU percentile (default: 0.9)\n  - --target-cpu-percentile=0.95             # More conservative CPU\n  \n  # Memory save target ratio (default: 0.98)\n  - --recommendation-lower-bound-cpu-percentile=0.5\n  - --recommendation-upper-bound-cpu-percentile=0.95\n  \n  # Metrics source\n  - --storage=prometheus                     # Use Prometheus instead of metrics API\n  - --prometheus-address=http://prometheus:9090\n```\n\n**Common tuning scenarios:**\n\n| Scenario | Flag Change | Effect |\n|----------|------------|--------|\n| Too many OOMKills | Increase oom-bump-up-ratio to 1.5 | More aggressive memory increase after OOM |\n| Recommendations too volatile | Increase half-life to 72h | Smoother, more stable recommendations |\n| Recommendations too conservative | Decrease margin-fraction to 0.10 | Tighter sizing |\n| Weekly patterns missed | Increase half-life to 168h | Full week retention |\n| Large cluster (slow recommender) | Set --recommender-interval=120s | Less frequent recalculation |",
+            "right-sizing", p),
+
+        make_pair("vpa-source-edge-case-009",
+            "VPA recommender is consuming too much memory. How do I fix it?",
+            "## VPA Recommender Memory Optimization\n\n**VPA recommender memory scales with: VPA object count × containers per VPA × histogram size.**\n\n**Typical memory usage:**\n- 50 VPA objects: ~200Mi\n- 200 VPA objects: ~500Mi\n- 500 VPA objects: ~1.5Gi\n- 1000+ VPA objects: ~3-5Gi\n\n**Optimization strategies:**\n\n### 1. Reduce VPA object count\nDon't create VPA for every deployment. Prioritize:\n- High-replica deployments (savings multiply)\n- Workloads you're actively right-sizing\n- Skip DaemonSets, Jobs, single-pod tools\n\n### 2. Use namespaceSelector on webhook\nReduce the admission webhook scope:\n```yaml\nnamespaceSelector:\n  matchLabels:\n    vpa-enabled: \"true\"\n```\nOnly labeled namespaces get VPA treatment.\n\n### 3. Reduce histogram resolution\nVPA uses ~80 CPU buckets and ~100 memory buckets per container. The `--cpu-histogram-decay-half-life` flag affects how many historical samples are retained.\n- Shorter half-life → fewer effective samples → less memory.\n- Trade-off: Less history = less accurate percentiles.\n\n### 4. Use Prometheus storage\n```bash\n--storage=prometheus --prometheus-address=http://prometheus:9090\n```\nOffloads metric storage to Prometheus. Recommender queries on-demand instead of maintaining in-memory histograms.\nTrade-off: Slower recommendation computation, depends on Prometheus availability.\n\n### 5. Right-size the recommender itself\n```yaml\nresources:\n  requests: {cpu: 500m, memory: 1Gi}\n  limits: {memory: 2Gi}  # Allow burst for large recalculations\n```\nMonitor with: `process_resident_memory_bytes{job=\"vpa-recommender\"}`",
+            "edge-case", p),
+    ]
+
+
+# ── Edge Cases ───────────────────────────────────────────────────────
+
+
+def vpa_edge_cases_pairs() -> list[dict]:
+    """Pairs about VPA edge cases and uncommon scenarios."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-edge-case-010",
+            "How does VPA handle StatefulSets differently from Deployments?",
+            "## VPA with StatefulSets\n\n**VPA supports StatefulSets but with important differences:**\n\n1. **Ordered updates**: StatefulSet pods are updated in reverse ordinal order (N-1, N-2, ..., 0). VPA updater respects this ordering when evicting pods.\n\n2. **Persistent storage**: Each StatefulSet pod has unique PVCs. VPA eviction triggers pod restart on the SAME node (if possible) to reuse the PV. If node has insufficient resources for new request, pod may be stuck Pending.\n\n3. **Conservative recommendations**: StatefulSets often run databases or stateful services. VPA should be MORE conservative:\n```yaml\napiVersion: autoscaling.k8s.io/v1\nkind: VerticalPodAutoscaler\nspec:\n  targetRef:\n    kind: StatefulSet\n    name: postgres\n  updatePolicy:\n    updateMode: \"Off\"  # NEVER auto-update stateful services\n  resourcePolicy:\n    containerPolicies:\n    - containerName: postgres\n      controlledResources: [cpu]  # CPU only, memory is manually configured\n      minAllowed: {cpu: 500m}\n      maxAllowed: {cpu: \"8\"}\n```\n\n4. **Per-pod variation**: StatefulSet pods may have different roles (primary vs replica). Usage patterns differ but VPA computes ONE recommendation for all pods.\n   - Primary: Higher CPU (write path)\n   - Replica: Higher memory (read cache)\n   - VPA recommendation is an average → suboptimal for both.\n\n**Recommendation**: Use VPA in Off mode for StatefulSets. Apply recommendations manually per pod role.",
+            "edge-case", p),
+
+        make_pair("vpa-source-edge-case-011",
+            "How does VPA handle CronJobs?",
+            "## VPA with CronJobs\n\n**VPA does NOT natively support CronJobs.** The targetRef must point to a controller that creates pods (Deployment, StatefulSet, DaemonSet, ReplicaSet).\n\n**Why CronJobs are problematic for VPA:**\n1. **Short-lived**: Pods exist for minutes. VPA needs sustained data collection.\n2. **Periodic**: Data points are clustered (e.g., every hour for 5 min). 95% of time, no data.\n3. **No continuous pods**: VPA admission webhook only fires on pod creation. CronJob pods are created by the Job controller, not directly by a VPA-targeted resource.\n\n**Workarounds:**\n\n1. **Manual monitoring**: Track CronJob resource usage over multiple runs.\n```promql\nmax_over_time(\n  container_cpu_usage_seconds_total{pod=~\"my-cronjob-.*\"}[7d]\n)\n```\nSize based on max observed across runs + headroom.\n\n2. **Fixed generous sizing**: CronJobs run briefly. Over-provisioning cost is low.\n```yaml\nresources:\n  requests: {cpu: \"2\", memory: 2Gi}  # Generous, but only used for minutes\n  limits: {cpu: \"4\", memory: 4Gi}     # Allow burst for faster completion\n```\nCost: 5 minutes/day × $0.0003/minute = $0.0015/day. Not worth optimizing.\n\n3. **Use a Deployment as proxy**: Create a Deployment that mimics the CronJob workload. Apply VPA to the Deployment. Use those recommendations for the CronJob.\n\n**k8s-sage approach**: Collect CronJob metrics separately. Aggregate across runs. Report per-run P95 and Max. Recommend based on Max * 1.2 (CronJobs should complete fast, not be throttled).",
+            "edge-case", p),
+
+        make_pair("vpa-source-edge-case-012",
+            "What happens when VPA and a mutating admission webhook both try to modify pod resources?",
+            "## VPA vs Other Admission Webhooks\n\n**Multiple webhooks can modify pod resources. Order matters.**\n\n**Webhook execution order:**\nK8s executes mutating webhooks in the order they were registered (by name, alphabetically). VPA webhook is typically named `vpa-webhook-config`.\n\nIf another webhook modifies resources AFTER VPA:\n- VPA sets request to 500m\n- Other webhook overrides to 200m\n- Pod gets 200m → VPA is effectively bypassed\n\n**Common conflicting webhooks:**\n1. **Istio sidecar injector**: Injects istio-proxy with its own resource requests. VPA manages the main container, Istio manages the sidecar. Usually no conflict.\n2. **LimitRange webhook**: Enforces min/max. If VPA recommendation < LimitRange min, LimitRange wins.\n3. **Custom admission controllers**: Some orgs have webhooks that enforce resource policies (\"all pods must have limits\").\n4. **Gatekeeper/Kyverno**: Policy engines that may reject or modify resource specs.\n\n**Debugging:**\n```bash\n# List all mutating webhooks in order\nkubectl get mutatingwebhookconfigurations -o jsonpath='{range .items[*]}{.metadata.name}{\"\\n\"}{end}' | sort\n\n# Check final pod spec after all webhooks\nkubectl get pod <pod> -o jsonpath='{.spec.containers[*].resources}'\n# Compare with VPA recommendation\nkubectl describe vpa <vpa-name> | grep -A5 Target\n```\n\n**If they disagree:**\n- VPA recommendation: 500m CPU\n- Pod shows: 200m CPU\n→ Another webhook modified after VPA. Check webhook ordering.\n\n**Fix**: Rename VPA webhook to sort last alphabetically (e.g., `zzz-vpa-webhook-config`).",
+            "edge-case", p),
+    ]
+
+
+# ── Scenario-Based Recommendations ──────────────────────────────────
+
+
+def scenario_cpu_pairs() -> list[dict]:
+    """Scenario-based pairs: given metrics, recommend CPU sizing."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-030",
+            "My Java API has: CPU request 4000m, P50=180m, P95=350m, P99=520m, Max=1800m. The P99 is during GC pauses. How should I right-size?",
+            "## Analysis: Java API CPU Right-Sizing\n\n**Current state**: 4000m requested, P95 usage 350m → 11.4x over-provisioned.\n\n**GC context matters**: P99=520m is from GC pauses. These are brief (10-200ms) but real CPU consumption. Max=1800m likely from full GC (rare, seconds-long).\n\n**Recommendation:**\n- CPU request: **420m** (P95=350m × 1.2 headroom)\n- CPU limit: **Remove entirely** or set to 2000m\n\n**Reasoning:**\n1. P95 (350m) covers normal operation including minor GC.\n2. 20% headroom accounts for measurement lag and micro-bursts.\n3. No CPU limit lets the JVM burst during full GC without CFS throttling. GC pauses are already latency-impacting; throttling makes them worse.\n4. Max=1800m is rare full GC. Requesting 1800m would waste 5x resources for an event that happens once per hour.\n\n**Savings**: 4000m → 420m = **3,580m freed per pod** (89.5% reduction).\n\n**Risk assessment:**\n- P(usage > 420m) ≈ 8% of periods → brief throttling during GC\n- Impact: P99 latency may increase 5-10ms during minor GC\n- Acceptable for most APIs. If not: increase to 624m (P99 × 1.2)\n\n**GC-specific advice**: If throttling during GC is unacceptable, tune GC instead: `-XX:MaxGCPauseMillis=50` reduces peak CPU at the cost of more frequent GC.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-031",
+            "My Python data processing pod has: CPU request 2000m, P50=50m, P95=1800m, P99=1900m, Max=2000m. CV=1.4. What's going on?",
+            "## Analysis: Python Data Processor — Batch Pattern\n\n**Pattern: BATCH** (CV=1.4 > 1.0). This workload alternates between idle and full utilization.\n\n**Interpretation:**\n- P50=50m: Idle most of the time (waiting for work)\n- P95=1800m: When processing, uses nearly all requested CPU\n- Max=2000m: Hits the limit during processing (likely throttled)\n\n**The request of 2000m is actually well-sized for the active period.** But the workload is idle 50%+ of the time.\n\n**Recommendations:**\n\n**Option A: Keep current sizing (if batch completion time matters)**\n- CPU request: 2000m (already right for processing)\n- No change needed for the active period\n- The \"waste\" during idle time is the cost of being ready\n\n**Option B: Reduce request + allow burst (if node has headroom)**\n- CPU request: 500m (ensures scheduling, covers idle + light work)\n- CPU limit: remove (allow burst to full node capacity during processing)\n- Risk: If node is contended, processing slows down\n\n**Option C: Architectural change (best for cost)**\n- Use KEDA to scale to 0 when queue is empty\n- When work arrives, pod starts with 2000m request\n- Cost: Only pay for processing time\n\n**Do NOT**: Size to P50 (50m). Processing would take 40x longer due to throttling.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-032",
+            "Nginx ingress controller: CPU request 500m, P50=120m, P95=380m, P99=450m, Max=900m. Steady pattern (CV=0.22). Should I right-size?",
+            "## Analysis: Nginx Ingress Controller\n\n**Pattern**: Steady (CV=0.22). Consistent CPU usage tracking traffic patterns.\n\n**Current sizing assessment:**\n- Request 500m vs P95=380m → ratio 1.32x → **Already well-sized!**\n\n**Recommendation: Minor adjustment only.**\n- CPU request: **456m** (P95=380m × 1.2) — barely different from current 500m\n- CPU limit: Consider removing to handle traffic bursts (Max=900m exceeds any reasonable limit)\n\n**Savings**: 500m → 456m = 44m per pod. At $24/core/month = $1.06/month per pod.\n\n**NOT worth the disruption of changing** unless you have many replicas:\n- 2 replicas: $2.12/month savings → skip\n- 10 replicas: $10.60/month savings → marginal\n- 50 replicas: $53/month savings → worth it\n\n**Important consideration for ingress controllers:**\n1. Ingress is on the critical path. Every request goes through it.\n2. TLS termination is CPU-intensive. Traffic spikes → CPU spikes.\n3. Max=900m suggests traffic bursts that exceed P99. Removing CPU limit prevents throttling during these bursts.\n4. Use Guaranteed QoS (request=limit) if running on shared nodes to avoid noisy neighbors affecting ingress latency.\n\n**Decision**: Keep current 500m. Remove CPU limit if not already. Focus right-sizing efforts elsewhere.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-033",
+            "Go microservice: CPU request 1000m, P50=50m, P95=80m, P99=400m, Max=950m. What explains the huge gap between P95 and P99?",
+            "## Analysis: Go Microservice — Spike Pattern\n\n**The P95→P99 gap (80m→400m = 5x jump) indicates brief, intense CPU spikes.**\n\n**Common causes in Go:**\n1. **Garbage collection**: Go's GC is concurrent but uses all available CPU briefly. With GOGC=100, GC runs when heap doubles. Each GC cycle: 2-10ms at multi-core intensity.\n2. **Goroutine scheduling**: Go can spawn goroutines rapidly. A burst of concurrent requests creates many goroutines, each needing CPU.\n3. **JSON serialization**: Large payloads serialized concurrently spike CPU.\n\n**Verification:**\n```promql\n# Check if spikes correlate with GC\ngo_gc_duration_seconds{quantile=\"0.99\"}\n# Check goroutine count spikes\ngo_goroutines\n```\n\n**Recommendation:**\n- CPU request: **96m** (P95=80m × 1.2)\n- CPU limit: **REMOVE** (Go needs burst capacity for GC and goroutine spikes)\n\n**Why not size for P99?**\nP99=400m is a 5ms burst every ~100 seconds. Requesting 400m for a workload that uses 80m 95% of the time wastes 80% of resources.\n\n**Why removing CPU limit is critical for Go:**\nWith 1000m limit, GC can burst to 1000m briefly. With 100m limit, GC is throttled → GC takes 10x longer → longer latency spikes → worse user experience.\n\n**Go-specific tuning:**\n- `GOMEMLIMIT=<80% of memory limit>`: Reduces GC frequency.\n- `GOGC=200`: Triggers GC less often (fewer spikes, but higher memory).\n\n**Savings**: 1000m → 96m = **904m freed** (90.4% reduction).",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-034",
+            "Redis cache: CPU request 1000m, P50=30m, P95=50m, P99=80m, Max=200m. Memory request 4Gi, P50=3.8Gi, P95=3.9Gi, P99=3.95Gi. How to right-size?",
+            "## Analysis: Redis Cache\n\n**CPU**: Grossly over-provisioned. 1000m request, P99=80m → 12.5x over.\n**Memory**: Well-sized! 4Gi request, P95=3.9Gi → 1.03x ratio. Memory is at maxmemory.\n\n**CPU recommendation:**\n- CPU request: **96m** (P99=80m × 1.2). Even being generous with P99.\n- CPU limit: **200m** (Max observed + headroom). Redis is single-threaded, doesn't need more than 1 core.\n\n**Memory recommendation:**\n- Memory request: **4Gi** — DO NOT REDUCE.\n- Memory limit: **4Gi** (Guaranteed QoS)\n\n**Why memory stays at 4Gi:**\nRedis `maxmemory` is set to ~3.8Gi. Redis will always use close to maxmemory (that's how LRU caching works). P95=3.9Gi is normal and expected. The 100Mi above maxmemory is:\n- Redis overhead (connections, replication buffers)\n- OS overhead (page tables, kernel structures)\n\nReducing to 3.95Gi would leave zero headroom for overhead → OOMKill during traffic spikes.\n\n**Critical**: VPA would see P95=3.9Gi and recommend ~4.5Gi (P99 × 1.15). This is WRONG for Redis. Override:\n```yaml\nresourcePolicy:\n  containerPolicies:\n  - containerName: redis\n    controlledResources: [cpu]  # VPA manages CPU only\n```\n\n**Savings**: CPU 1000m → 96m = 904m freed. Memory unchanged.\nAt $24/core/month: **$21.70/month per Redis pod**.",
+            "right-sizing", p),
+    ]
+
+
+def scenario_memory_pairs() -> list[dict]:
+    """Scenario-based pairs: given metrics, recommend memory sizing."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-035",
+            "Node.js API: Memory request 2Gi, P50=400Mi, P95=600Mi, P99=800Mi, Max=1.5Gi. Usage shows a sawtooth pattern. How to right-size?",
+            "## Analysis: Node.js Memory — Sawtooth Pattern\n\n**Sawtooth = V8 garbage collection cycle.** Memory grows, GC runs, memory drops. This is normal.\n\n**Key metrics:**\n- P50=400Mi: Post-GC baseline\n- P99=800Mi: Pre-GC peak\n- Max=1.5Gi: Likely startup or cache warming peak\n\n**Recommendation:**\n- Memory request: **920Mi** (P99=800Mi × 1.15)\n- Memory limit: **1.2Gi** (P99 × 1.5, covers startup spike)\n\n**Why not size to P50?**\nV8 needs headroom to accumulate garbage before GC. With 500Mi limit (just above P50), V8 would GC constantly → high CPU usage → poor throughput.\n\n**Why not size to Max?**\nMax=1.5Gi was likely a one-time startup event. Sizing for it wastes 700Mi continuously.\n\n**V8-specific tuning:**\n```yaml\nenv:\n- name: NODE_OPTIONS\n  value: \"--max-old-space-size=768\"  # 768Mi old space (within 920Mi request)\n```\nThis caps V8 heap at 768Mi. Remaining 152Mi for: new space (64Mi), code space (32Mi), external buffers, OS overhead.\n\n**Savings**: 2Gi → 920Mi = **1,128Mi freed** (55% reduction).\n\n**Monitoring post-change:**\n```promql\ncontainer_memory_working_set_bytes{container=\"api\"} / container_spec_memory_limit_bytes{container=\"api\"}\n```\nKeep below 80%. If approaching 90% consistently, increase limit.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-036",
+            "PostgreSQL: Memory request 8Gi, limit 8Gi. shared_buffers=4Gi, effective_cache_size=6Gi. Metrics show P95=7.2Gi. How to right-size?",
+            "## Analysis: PostgreSQL Memory\n\n**PostgreSQL memory is CONFIGURED, not dynamic.** Metrics show 7.2Gi but most is intentional buffer allocation.\n\n**Memory breakdown:**\n- shared_buffers: 4Gi (fixed allocation, used for data caching)\n- work_mem × max_connections: 64Mi × 100 = 6.4Gi (worst case, rarely reached)\n- maintenance_work_mem: 256Mi (VACUUM, CREATE INDEX)\n- OS page cache: Variable, used for effective_cache_size\n- PostgreSQL overhead: ~200Mi (WAL buffers, catalog cache)\n\n**Realistic peak:**\n```\n4Gi (shared_buffers) + 0.5Gi (avg work_mem in use) + 256Mi + 200Mi ≈ 5Gi\n```\nP95=7.2Gi includes OS page cache (reclaimable under pressure).\n\n**Recommendation:**\n- Memory request: **6Gi** (shared_buffers + realistic overhead + 20% headroom)\n- Memory limit: **8Gi** (keep current — allows page cache)\n\n**Why keep limit at 8Gi?**\nThe page cache between 6Gi and 8Gi accelerates queries (effective_cache_size=6Gi). Reducing limit loses this free performance.\n\n**Why reduce request to 6Gi?**\nScheduler uses request for bin-packing. 6Gi request tells the scheduler this pod needs 6Gi guaranteed. The extra 2Gi (up to limit) is opportunistic.\n\n**DO NOT use VPA for PostgreSQL memory.** Use manual sizing based on configuration.\n\n**Warning**: Reducing shared_buffers to save memory WILL degrade query performance. Profile with `pg_stat_bgwriter` and `pg_statio_user_tables` before changing.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-037",
+            "Spring Boot API: Memory request 2Gi, -Xmx1536m, P50=1.4Gi, P95=1.6Gi, P99=1.7Gi, Max=1.85Gi. Should I right-size?",
+            "## Analysis: Spring Boot (JVM) Memory\n\n**JVM memory = heap + non-heap.** Must size container for both.\n\n**Breakdown:**\n- Heap (-Xmx): 1536Mi (1.5Gi) max\n- Metaspace: 100-200Mi (class metadata)\n- Thread stacks: 50 threads × 1Mi = 50Mi\n- Native memory (NIO, JNI): 50-100Mi\n- Code cache: 50-100Mi\n- GC overhead: 50-100Mi\n\n**Calculated minimum:**\n```\n1536Mi (heap) + 200Mi (metaspace) + 50Mi (stacks) + 100Mi (native) + 100Mi (code) + 100Mi (GC) = 2086Mi\n```\n\n**Current sizing:**\n- Request 2Gi (2048Mi) vs calculated minimum 2086Mi → **slightly under-provisioned!**\n- P99=1.7Gi means heap isn't fully utilized (P99 < Xmx + overhead)\n- Max=1.85Gi approaching the 2Gi limit → OOMKill risk during full GC\n\n**Recommendation:**\n- Memory request: **2.2Gi** (Xmx + 700Mi non-heap overhead)\n- Memory limit: **2.5Gi** (request + 300Mi GC headroom)\n\n**This is a case where the pod needs MORE memory, not less.**\n\n**Alternative**: Reduce -Xmx to 1Gi if application can handle it:\n- New container: 1Gi + 700Mi overhead = 1.7Gi request\n- Saves: 500Mi per pod\n- Risk: More frequent GC, potential throughput reduction\n\n**JVM formula:**\n```\ncontainer_memory = Xmx + 700Mi  # Safe approximation for non-heap\ncontainer_limit = container_memory + 300Mi  # GC headroom\n```",
+            "right-sizing", p),
+
+        make_pair("vpa-source-edge-case-013",
+            "My pod's memory usage grows linearly at 10Mi/hour. Currently at 800Mi with a 2Gi limit. When will it OOM and what should I do?",
+            "## Analysis: Linear Memory Growth — Likely Leak\n\n**At 10Mi/hour growth:**\n- Current: 800Mi\n- Limit: 2Gi (2048Mi)\n- Remaining: 1248Mi\n- Time to OOM: 1248Mi / 10Mi/hr = **124.8 hours (5.2 days)**\n\n**Verification:**\n```promql\npredict_linear(container_memory_working_set_bytes{pod=\"<pod>\"}[6h], 3600*24*7)\n```\nThis predicts memory 7 days from now.\n\n**This is almost certainly a memory leak** because:\n1. Linear growth regardless of traffic = growth not proportional to work done\n2. No plateau = not caching behavior (caches fill and stop)\n3. Growth continues after traffic drops = not request-related\n\n**Immediate actions:**\n1. **Don't increase the limit.** That just delays the OOM.\n2. **Add a proactive restart:**\n```yaml\nlivenessProbe:\n  exec:\n    command: [\"sh\", \"-c\", \"test $(cat /sys/fs/cgroup/memory/memory.usage_in_bytes) -lt 1500000000\"]\n  periodSeconds: 60\n  failureThreshold: 3\n```\nRestarts pod when memory exceeds ~1.5Gi (before the 2Gi OOM).\n\n3. **Fix the leak** (priority): Profile with runtime-specific tools:\n   - Go: `pprof` heap profile comparison\n   - Java: `jmap -histo:live` before and after\n   - Node.js: `--inspect` + Chrome DevTools\n   - Python: `tracemalloc`\n\n4. **Short-term sizing**: Keep 2Gi limit. Set request to 1.5Gi (average over leak lifecycle). Accept periodic restarts.\n\n**k8s-sage flag**: \"Linear memory growth detected (10Mi/hr). OOMKill predicted in ~5 days. Investigate memory leak.\"",
+            "edge-case", p),
+
+        make_pair("vpa-source-right-sizing-038",
+            "Elasticsearch: Memory request 16Gi, limit 16Gi. JVM heap is 8Gi (-Xms8g -Xmx8g). Metrics show P95=15.2Gi. Is this over-provisioned?",
+            "## Analysis: Elasticsearch Memory\n\n**No, 16Gi is correctly sized for 8Gi heap.** Here's why:\n\n**Elasticsearch memory breakdown:**\n- JVM heap: 8Gi (fixed, -Xms==-Xmx)\n- Lucene off-heap: 4-6Gi (memory-mapped segment files, proportional to index size)\n- Network buffers (Netty): 200Mi-500Mi\n- JVM non-heap: 200-400Mi (metaspace, code cache, thread stacks)\n\n**Total: 8Gi + 5Gi + 400Mi + 300Mi ≈ 13.7Gi minimum**\n\nP95=15.2Gi is expected. The Lucene off-heap varies with query load and index activity.\n\n**Recommendation:**\n- Memory request: **16Gi** (keep current)\n- Memory limit: **16Gi** (Guaranteed QoS, critical for databases)\n\n**The 50% rule for Elasticsearch:**\nHeap should be ~50% of container memory. 8Gi heap / 16Gi container = 50%. This leaves 8Gi for Lucene's file system cache, which is critical for query performance.\n\n**Do NOT:**\n- Reduce to 12Gi: Lucene loses cache → query latency increases 2-10x\n- Increase heap above 50%: Less room for Lucene cache, diminishing returns from heap\n- Use VPA: ES memory is fully configured, not dynamic\n\n**When to increase:**\n- Index size growing significantly → Lucene needs more off-heap cache\n- Adding more shards → more overhead per shard (~25Mi each)\n- Increasing field data → needs explicit `indices.fielddata.cache.size`\n\n**Right-sizing ES = tuning configuration, not container resources.**",
+            "right-sizing", p),
+    ]
+
+
+def comparison_pairs() -> list[dict]:
+    """Pairs comparing different right-sizing approaches."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-039",
+            "Why does VPA recommend 800m CPU when the simple average is 200m?",
+            "## VPA vs Simple Average\n\n**Simple average is the worst metric for right-sizing.** Here's why VPA recommends 4x more:\n\n**Example data** (CPU usage over 24h):\n- 20 hours at 100m (idle/low traffic)\n- 3 hours at 400m (normal traffic)\n- 1 hour at 900m (peak traffic)\n- Simple average: (20×100 + 3×400 + 1×900) / 24 = **179m**\n\n**VPA calculation:**\n- P95 of all samples: ~400m (95th percentile)\n- P99: ~800m\n- With margin: 800m × 1.15 = **920m** → VPA recommends ~800-900m\n\n**Why average fails:**\n1. **Averages hide peaks**: 179m request means the pod is throttled for 4+ hours per day (whenever usage > 179m).\n2. **CFS throttling is per-period**: Even brief spikes above request within a 100ms CFS period cause throttling.\n3. **Average penalizes idle time**: 20 hours of low usage pulls the average down, but those hours don't need resources anyway.\n\n**Better alternatives to average:**\n\n| Method | Value | When to Use |\n|--------|-------|------------|\n| Simple average | 179m | Never for production |\n| P50 (median) | ~100m | Dev/test environments |\n| P95 | ~400m | Standard right-sizing |\n| P99 | ~800m | Tier 1 services |\n| P99 + 20% headroom | 960m | Conservative/critical |\n| Max | 900m | If you can't afford ANY throttling |\n\n**VPA uses P90 for CPU by default** (configurable via `--target-cpu-percentile`), then adds a margin. This is why it's higher than average but lower than max.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-040",
+            "k8s-sage recommends reducing CPU from 2000m to 400m. VPA recommends 600m. Why do they differ?",
+            "## Why k8s-sage and VPA May Disagree\n\n**Different algorithms produce different recommendations.** Understanding why helps choose the right one.\n\n**Possible reasons for the discrepancy:**\n\n1. **Different percentile targets:**\n   - VPA default: P90 CPU + margin (~15%) = P90 × 1.15\n   - k8s-sage default: P95 CPU + headroom (20%) = P95 × 1.20\n   - If P90=520m: VPA = 520 × 1.15 = 598m ≈ 600m\n   - If P95=330m: k8s-sage = 330 × 1.20 = 396m ≈ 400m\n   - P90 to P95 drop means most usage is below P90 but the tail is long.\n\n2. **Different data windows:**\n   - VPA: Exponential decay (effective window ~3 days)\n   - k8s-sage: 7-day uniform window\n   - If a traffic spike happened 5 days ago: VPA barely counts it, k8s-sage counts it fully.\n\n3. **OOM bump-up in VPA:**\n   - If there was a recent OOMKill, VPA bumps up aggressively (1.2x the OOM limit).\n   - k8s-sage adjusts memory separately but doesn't cross-contaminate CPU recommendation.\n\n4. **Pattern awareness:**\n   - k8s-sage classifies the workload pattern and adjusts headroom.\n   - VPA uses a one-size-fits-all approach.\n\n**Which to trust?**\n- For burstable workloads: Trust the HIGHER recommendation (VPA at 600m). Bursts need headroom.\n- For steady workloads: Trust k8s-sage (400m). Pattern-aware sizing is more accurate.\n- When in doubt: Start with the higher recommendation. Monitor. Tighten after 1 week.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-classification-007",
+            "When should I use VPA vs k8s-sage vs manual right-sizing?",
+            "## Right-Sizing Tool Selection\n\n| Factor | VPA | k8s-sage | Manual |\n|--------|-----|----------|--------|\n| **Automation** | Full (Auto mode) | Semi (recommendations + optional apply) | None |\n| **Pattern awareness** | No | Yes (steady/burstable/batch/idle) | Human judgment |\n| **Runtime-specific** | No | Yes (JVM, Go, Python, etc.) | Human expertise |\n| **Multi-container** | Per-container | Per-container + pod-level | Flexible |\n| **Data source** | Metrics API only | Prometheus (richer) | Any |\n| **History** | ~3 days effective | 7+ days configurable | Any |\n| **Explainability** | Number only | Full reasoning | Full context |\n| **Setup effort** | Medium (3 CRDs) | Low (single binary) | None |\n\n**Recommendations:**\n\n- **VPA Auto**: Tier 3 workloads (dev, internal tools). Set and forget.\n- **VPA Off + k8s-sage**: Tier 2 workloads. Use VPA for data collection, k8s-sage for analysis and recommendations.\n- **k8s-sage only**: Tier 1 workloads. Pattern-aware recommendations with full explanation for human review.\n- **Manual**: Special workloads (databases, GPU, StatefulSets) where domain expertise trumps algorithms.\n\n**Hybrid approach (recommended):**\n1. Deploy VPA in Off mode everywhere (free data collection).\n2. Run k8s-sage analysis weekly (better recommendations).\n3. VPA Auto for approved Tier 3 workloads.\n4. Manual review for Tier 1 critical services.\n\nk8s-sage can consume VPA recommendations as an input signal, combining VPA's continuous monitoring with k8s-sage's intelligence.",
+            "classification", p),
+    ]
+
+
+def troubleshooting_pairs() -> list[dict]:
+    """Troubleshooting pairs for common right-sizing issues."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-edge-case-014",
+            "After right-sizing, our cluster autoscaler is adding more nodes. Why?",
+            "## Right-Sizing Causing Node Scaling\n\n**Paradox**: You reduced resource requests (should need fewer nodes), but cluster autoscaler is adding nodes.\n\n**Root cause analysis:**\n\n1. **Reduced requests → more pods scheduled per node → node memory/CPU actually higher:**\n   Before: 10 pods × 2000m request = 20 CPU allocated. 5 nodes.\n   After: 10 pods × 500m request = 5 CPU allocated. Scheduler packs all 10 onto 1 node.\n   Actual usage is still 2000m total → 1 node at 200% utilization → pressure → new pods can't schedule.\n\n2. **HPA reaction**: Right-sizing increased utilization percentage → HPA scales up replicas → more total pods → need more nodes.\n   Before: 10 pods, 2000m request, 500m usage → 25% utilization → HPA says \"enough\"\n   After: 10 pods, 500m request, 500m usage → 100% utilization → HPA says \"scale up to 20 pods\" → needs more nodes.\n\n3. **Memory fragmentation**: After right-sizing, pods are smaller but nodes can't fit them efficiently. 50 pods at 200Mi each = 10Gi, but node has 8Gi allocatable. 40 fit, 10 pending → new node.\n\n**Solutions:**\n- **Adjust HPA target**: When reducing CPU request from 2000m to 500m, HPA target must change from 25% to 70% (to maintain same absolute threshold).\n- **Bin-packing**: Use `MostAllocated` scheduling strategy instead of `LeastAllocated`.\n- **Staged rollout**: Right-size 25% of pods at a time. Monitor node count between stages.\n- **Right-size + node resize**: Reduce pod requests AND switch to smaller node types simultaneously.",
+            "edge-case", p),
+
+        make_pair("vpa-source-edge-case-015",
+            "My team right-sized aggressively and now P99 latency increased 40%. How do I find the sweet spot?",
+            "## Finding the Right-Sizing Sweet Spot\n\n**Binary search approach**: Find the minimum resources that meet latency SLA.\n\n**Step 1: Establish baseline**\nBefore any right-sizing, record:\n- P50, P95, P99 latency\n- Error rate\n- Throughput (requests/second)\n\n**Step 2: Iterative reduction**\nReduce in 20% increments, not all at once:\n```\nRound 1: 2000m → 1600m (20% reduction). Observe 24h.\nRound 2: 1600m → 1280m (20% reduction). Observe 24h.\nRound 3: 1280m → 1024m. Observe 24h.\n...stop when latency increases >10% from baseline.\n```\n\n**Step 3: Correlate resources with latency**\nPlot: CPU request (X) vs P99 latency (Y).\n```\n2000m → 50ms (baseline)\n1600m → 52ms (+4%)\n1280m → 55ms (+10%) ← acceptable\n1024m → 65ms (+30%) ← SLA breach\n800m  → 70ms (+40%) ← current state, too aggressive\n```\nSweet spot: **1280m** (maximum savings while meeting latency SLA).\n\n**Step 4: Add headroom**\nSweet spot = 1280m. Add 15% headroom: **1472m → round to 1500m**.\n\n**Step 5: Validate with load testing**\nRun load test at peak traffic with 1500m. P99 should be ≤ 55ms.\n\n**Key insight**: The relationship between resources and latency is NOT linear. There's a \"knee\" point where reducing resources further causes disproportionate latency increase. Right-size to just above that knee.",
+            "edge-case", p),
+
+        make_pair("vpa-source-edge-case-016",
+            "VPA keeps recommending higher memory for my Go application even though there's no memory leak. Why?",
+            "## Go Memory: VPA Recommendation Growth Without Leak\n\n**Go's memory behavior confuses VPA because of how the Go GC works.**\n\n**What's happening:**\n1. Go GC triggers when heap reaches `GOGC%` above the live set (default GOGC=100 → GC at 2x live).\n2. As the application runs, some objects survive longer → live set gradually increases.\n3. RSS (what VPA sees) = live set + garbage not yet collected + runtime overhead.\n4. RSS only decreases when Go returns memory to the OS (delayed, uses `MADV_FREE`).\n\n**VPA sees**: RSS growing 50Mi → 80Mi → 120Mi → 150Mi over days. Recommends increasingly higher memory.\n\n**Reality**: Live set is stable at 40Mi. RSS grows because Go hasn't returned freed pages. Not a leak.\n\n**Verification:**\n```promql\n# Go runtime metrics\ngo_memstats_heap_inuse_bytes   # Actual heap in use (should be stable)\ngo_memstats_heap_sys_bytes     # Heap obtained from OS (grows)\ngo_memstats_heap_released_bytes # Returned to OS (may lag)\n```\n\nIf `heap_inuse` is stable but `heap_sys` grows → NOT a leak. Go is just holding onto memory.\n\n**Solutions:**\n1. **GOMEMLIMIT**: Set to 80% of container memory limit. Forces Go to return memory more aggressively.\n2. **`debug.FreeOSMemory()`**: Call periodically to force memory return.\n3. **Override VPA memory**: Use `maxAllowed.memory` based on actual live set × 3:\n   ```yaml\n   maxAllowed: {memory: 200Mi}  # live_set(40Mi) × 3 + overhead\n   ```\n4. **Use k8s-sage**: Understands Go GC patterns. Sizes based on live set, not RSS.",
+            "edge-case", p),
+    ]
+
+
+def workload_specific_vpa_pairs() -> list[dict]:
+    """Workload-specific VPA/right-sizing guidance."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-041",
+            "How should I right-size a Kafka broker deployment?",
+            "## Kafka Broker Right-Sizing\n\n**Kafka brokers have unique resource characteristics:**\n\n**Memory:**\n- JVM heap: 4-6Gi is the sweet spot. More heap → longer GC pauses.\n- Page cache: As much as possible. Kafka's performance depends on OS page cache for log segment reads.\n- Formula: container_memory = heap + page_cache + overhead\n- Typical: 6Gi heap + 10-20Gi page cache + 1Gi overhead = **17-27Gi**\n\n```yaml\nresources:\n  requests: {memory: 24Gi}\n  limits: {memory: 24Gi}  # Guaranteed QoS for stateful\n```\n\n**CPU:**\n- Scales with throughput (messages/sec) and compression/decompression.\n- Uncompressed: ~100m per 10K msg/sec\n- With compression (snappy): ~200m per 10K msg/sec\n- With SSL: ~500m per 10K msg/sec\n\n```yaml\n# For 100K msg/sec with SSL + snappy:\nresources:\n  requests: {cpu: \"6\"}   # 5 CPU + headroom\n  limits: {cpu: \"8\"}     # Allow burst for rebalancing\n```\n\n**Anti-patterns:**\n- VPA on Kafka: Don't use. Kafka memory = config, CPU = throughput. Both are predictable.\n- Reducing page cache: Dramatically increases disk I/O → latency.\n- CPU limit too tight: Rebalancing and ISR catch-up need burst capacity.\n\n**Right-sizing trigger**: Change configuration, not resources. If throughput increases, add brokers (horizontal) rather than bigger brokers (vertical).",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-042",
+            "How do I right-size pods running ML model inference (PyTorch/TensorFlow)?",
+            "## ML Inference Right-Sizing\n\n**ML inference pods have distinct phases:**\n1. **Model loading** (startup): High memory spike, moderate CPU. 30s-5min.\n2. **Steady-state inference**: Stable memory (model + batch buffers), CPU proportional to request rate.\n3. **Batch processing**: Memory spikes with batch size. CPU spikes with computation.\n\n**Memory sizing:**\n```\nmemory = model_size + framework_overhead + batch_buffer + safety\n```\n\n| Component | Calculation |\n|-----------|------------|\n| Model size | Parameters × bytes_per_param (fp32=4, fp16=2, int8=1) |\n| Framework | PyTorch: 300-500Mi. TensorFlow: 500Mi-1Gi. ONNX: 100-200Mi |\n| Batch buffer | batch_size × input_size × 4 (fp32) |\n| Safety | 20% of above |\n\n**Example (ResNet-50, fp16, batch=32):**\n```\nModel: 25M params × 2 bytes = 50Mi\nPyTorch: 400Mi\nBatch: 32 × 224×224×3 × 4 = 19Mi\nSafety: 94Mi\nTotal: ~560Mi\n```\n\n**CPU sizing (CPU inference):**\n- Proportional to model FLOPs × batch_size × QPS\n- Use `OMP_NUM_THREADS` and `MKL_NUM_THREADS` = CPU request\n- PyTorch default: uses ALL cores. Must limit explicitly.\n\n```yaml\nresources:\n  requests: {cpu: \"4\", memory: 1Gi}\n  limits: {cpu: \"4\", memory: 1Gi}  # Guaranteed QoS for predictable latency\nenv:\n- {name: OMP_NUM_THREADS, value: \"4\"}\n- {name: MKL_NUM_THREADS, value: \"4\"}\n```\n\n**VPA for ML inference**: Use only for CPU. Memory is determined by model size (constant).",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-043",
+            "How do I right-size a Prometheus deployment for my cluster?",
+            "## Prometheus Right-Sizing (from VPA perspective)\n\n**Prometheus memory is proportional to active time series count:**\n```\nmemory ≈ active_series × 2KB + WAL_size + query_cache\n```\n\n**Step 1: Count your series**\n```promql\nprometheus_tsdb_head_series  # Active series count\n```\n\n**Step 2: Apply formula**\n| Series | Base Memory | Query Buffer | Total Request |\n|--------|-----------|-------------|---------------|\n| 50K | 100Mi | 200Mi | 500Mi |\n| 200K | 400Mi | 500Mi | 1.5Gi |\n| 500K | 1Gi | 1Gi | 3Gi |\n| 1M | 2Gi | 2Gi | 6Gi |\n| 5M | 10Gi | 5Gi | 20Gi |\n\n**CPU sizing:**\n- Ingestion: ~100m per 50K samples/sec\n- Queries: varies wildly. Heavy dashboards can spike CPU.\n- Recording rules: additive. Each rule ≈ a continuous query.\n\n**VPA for Prometheus:**\n- **Memory**: VPA struggles because Prometheus memory is determined by series count, which grows with cluster size. VPA would constantly chase upward.\n- **CPU**: VPA can work for CPU since it varies with query load.\n- **Best practice**: `controlledResources: [cpu]` only.\n\n**Common mistake**: Cardinality explosion. One bad label (pod_name with random suffix) creates millions of series. Memory explodes.\n```promql\ntopk(10, count by (__name__)({__name__=~\".+\"}))\n# Find metrics with highest series count\n```",
+            "right-sizing", p),
+    ]
+
+
+def algorithm_detail_pairs() -> list[dict]:
+    """Detailed algorithmic pairs about the right-sizing calculation."""
+    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    return [
+        make_pair("vpa-source-right-sizing-044",
+            "Walk me through the complete right-sizing algorithm for a new deployment step by step.",
+            "## Complete Right-Sizing Algorithm\n\n**Input**: Deployment name, namespace, observation window (default: 7d)\n\n### Step 1: Data Collection\nQuery Prometheus for each container:\n```promql\nrate(container_cpu_usage_seconds_total{namespace=\"X\", pod=~\"deploy-.*\"}[5m])[7d:1m]\ncontainer_memory_working_set_bytes{namespace=\"X\", pod=~\"deploy-.*\"}[7d:1m]\n```\nResult: ~10,080 CPU samples and ~10,080 memory samples per container.\n\n### Step 2: Pattern Classification\n- Calculate mean and standard deviation of CPU samples.\n- CV = std / mean\n- Classify: steady (CV<0.3), burstable (0.3-1.0), batch (>1.0), idle (mean<5% of request)\n\n### Step 3: Percentile Calculation\n- Sort all CPU samples. Extract P50, P95, P99, Max.\n- Sort all memory samples. Extract P50, P95, P99, Max.\n\n### Step 4: Headroom Selection\nBased on pattern:\n- Steady: CPU=P95×1.15, Memory=P99×1.10\n- Burstable: CPU=P95×1.25, Memory=P99×1.20\n- Batch: CPU=P95×1.10, Memory=P99×1.20\n- Idle: Flag for decommissioning\n\n### Step 5: Safety Bounds\n- CPU floor: max(recommendation, 10m)\n- Memory floor: max(recommendation, 32Mi)\n- CPU ceiling: node_allocatable_cpu * 0.8\n- Memory ceiling: node_allocatable_memory * 0.8\n\n### Step 6: Confidence Scoring\n- Data window points + pattern stability + sample count + OOM history\n- Score 0-100\n\n### Step 7: Savings Calculation\n- CPU savings = (current_request - recommendation) × pod_count × $24/core/month\n- Memory savings = (current_request - recommendation) × pod_count × $3.2/Gi/month\n\n### Step 8: Output\n```json\n{\"cpu_request\": \"450m\", \"memory_request\": \"800Mi\", \"memory_limit\": \"920Mi\",\n \"pattern\": \"burstable\", \"confidence\": 78, \"monthly_savings\": \"$23.40\",\n \"risk\": \"low\"}\n```",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-045",
+            "How does VPA choose between its lower bound, target, and upper bound recommendations?",
+            "## VPA's Three Recommendation Bounds\n\n**VPA produces three recommendations for each resource:**\n\n```bash\nkubectl describe vpa my-app-vpa\n# Recommendation:\n#   Container Recommendations:\n#     Container Name: app\n#       Lower Bound:  Cpu: 100m, Memory: 200Mi\n#       Target:       Cpu: 250m, Memory: 400Mi\n#       Upper Bound:  Cpu: 500m, Memory: 800Mi\n#       Uncapped Target: Cpu: 250m, Memory: 400Mi\n```\n\n**What each means:**\n\n**Target**: The primary recommendation. Computed from the configured percentile (default P90 for CPU) + margin. This is what gets applied to pods.\n\n**Lower Bound**: The minimum recommended. Below this, the workload will likely experience throttling (CPU) or OOMKill (memory). Computed from a lower percentile (default P50).\n\n**Upper Bound**: The maximum recommended. Above this is waste. Computed from a higher percentile (default P95) × safety multiplier.\n\n**Uncapped Target**: Target before applying minAllowed/maxAllowed. If uncapped != target, bounds are clamping the recommendation.\n\n**How the updater uses them:**\n- Updater evicts pod if: current_request < lower_bound OR current_request > upper_bound + margin.\n- If current is between lower and upper (\"in range\"), no eviction (even if != target).\n- This prevents constant churn when recommendation oscillates slightly.\n\n**For k8s-sage**: We report a single recommendation (equivalent to VPA's target) with confidence score. Lower/upper bounds are implicit in our risk assessment.",
+            "right-sizing", p),
+
+        make_pair("vpa-source-right-sizing-046",
+            "How should I right-size a deployment that has been running for only 2 hours?",
+            "## Early-Stage Right-Sizing (Limited Data)\n\n**With only 2 hours of data:**\n- ~120 CPU samples, ~120 memory samples (1-min interval)\n- Reliable for: P50, P75\n- Unreliable for: P95, P99 (only ~6 and ~1 samples in the tail)\n- Pattern classification: Preliminary only\n\n**Approach for 2-hour data:**\n\n### Conservative estimate (recommended):\n```\ncpu_request = max(P75 × 2.0, current_max × 1.2)\nmemory_request = max(P95 × 1.5, current_max × 1.3)\n```\nWide headroom compensates for lack of data.\n\n### With context (better):\nIf you know the workload type:\n- **Web API**: Start with team's standard sizing. Refine after 7 days.\n- **JVM**: Start with Xmx × 1.5 memory, 2 CPU. Known baseline.\n- **Batch job**: Size for the current run's max × 1.2. Review after 3+ runs.\n\n### Progressive sizing:\n| Data Available | Confidence | Approach |\n|---------------|-----------|----------|\n| <2 hours | Very low | Use team defaults or known-good baselines |\n| 2-24 hours | Low | P75 × 2.0 (conservative) |\n| 1-7 days | Medium | Standard algorithm (P95 + headroom) |\n| 7+ days | High | Full algorithm with pattern classification |\n\n**k8s-sage output for 2-hour data:**\n\"Preliminary recommendation: CPU 500m, Memory 800Mi. Confidence: LOW (12/100). Based on 2h data, 120 samples. Re-evaluate after 24h for medium confidence, 7d for high confidence.\"\n\n**Never auto-apply low-confidence recommendations.** Display for information only.",
+            "right-sizing", p),
+    ]
+
+
+def generate_all() -> list[dict]:
+    """Generate all VPA source pairs and write to JSONL."""
+    all_pairs = []
+    all_pairs.extend(percentile_estimation_pairs())
+    all_pairs.extend(pattern_classification_pairs())
+    all_pairs.extend(oom_handling_pairs())
+    all_pairs.extend(headroom_safety_pairs())
+    all_pairs.extend(confidence_scoring_pairs())
+    all_pairs.extend(decay_history_pairs())
+    all_pairs.extend(container_policy_pairs())
+    all_pairs.extend(risk_assessment_pairs())
+    all_pairs.extend(waste_detection_pairs())
+    all_pairs.extend(recommendation_limits_pairs())
+    all_pairs.extend(vpa_internals_pairs())
+    all_pairs.extend(multi_resource_pairs())
+    all_pairs.extend(operational_vpa_pairs())
+    all_pairs.extend(vpa_edge_cases_pairs())
+    # Scenario-based and advanced pairs
+    all_pairs.extend(scenario_cpu_pairs())
+    all_pairs.extend(scenario_memory_pairs())
+    all_pairs.extend(comparison_pairs())
+    all_pairs.extend(troubleshooting_pairs())
+    all_pairs.extend(workload_specific_vpa_pairs())
+    all_pairs.extend(algorithm_detail_pairs())
+
+    # Validate
+    ids = set()
+    for pair in all_pairs:
+        pid = pair["id"]
+        assert pid not in ids, f"Duplicate ID: {pid}"
+        ids.add(pid)
+        assert len(pair["assistant"]) >= 50, f"{pid}: assistant too short"
+        assert pair["metadata"]["category"] in (
+            "right-sizing", "classification", "runtime-specific", "edge-case"
+        ), f"{pid}: bad category"
+        assert pair["metadata"].get("provenance"), f"{pid}: missing provenance"
+
+    # Write
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(OUTPUT_PATH, "w") as f:
+        for pair in all_pairs:
+            f.write(json.dumps(pair) + "\n")
+
+    print(f"Wrote {len(all_pairs)} VPA source pairs -> {OUTPUT_PATH}")
+    return all_pairs
+
+
+if __name__ == "__main__":
+    pairs = generate_all()
+    cats = {}
+    for p in pairs:
+        c = p["metadata"]["category"]
+        cats[c] = cats.get(c, 0) + 1
+    print("Pairs by category:")
+    for cat, count in sorted(cats.items()):
+        print(f"  {cat}: {count}")
