@@ -26,6 +26,15 @@ const (
 	// batchIdleRatio is the minimum ratio of max/P50 for batch detection.
 	// Batch workloads are mostly idle with extreme spikes during execution.
 	batchIdleRatio = 10.0
+
+	// lowUsageP50Floor is the P50 CPU threshold (millicores) below which
+	// ratio-based classification is unreliable. When P50 is near zero,
+	// CV and batch ratios (P99/P50, Max/P50) explode and misclassify daemons.
+	lowUsageP50Floor = 25.0
+
+	// lowUsageSpikeFloor is the absolute spike threshold (millicores) below
+	// which spikes are noise, not genuine batch/burstable behaviour.
+	lowUsageSpikeFloor = 100.0
 )
 
 // ClassifyWorkload determines the workload pattern based on CPU usage metrics
@@ -45,6 +54,15 @@ func ClassifyWorkload(cpuUsage models.MetricAggregate, cpuRequestMillis int64, d
 	// Cannot classify shape with no data.
 	if cpuUsage.Max == 0 && cpuUsage.P50 == 0 {
 		return models.PatternSteady // default to steady with no data
+	}
+
+	// Guard: if absolute CPU values are tiny, classify by absolute amplitude
+	// instead of ratios (which blow up near zero).
+	if cpuUsage.P50 < lowUsageP50Floor {
+		if cpuUsage.Max >= lowUsageSpikeFloor {
+			return models.PatternBurstable // low baseline but real spikes
+		}
+		return models.PatternSteady // low-usage daemon, ratio math is meaningless
 	}
 
 	// Compute coefficient of variation from available percentiles.

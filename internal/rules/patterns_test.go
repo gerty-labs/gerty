@@ -79,11 +79,11 @@ func TestClassifyWorkload(t *testing.T) {
 			want:              models.PatternSteady, // P50/req = 0.051 >= 0.05; CV = (60-51)/51 = 0.18 < 0.3
 		},
 		{
-			name:              "not idle — insufficient data window",
+			name:              "not idle — insufficient data window, low P50 guard",
 			cpuUsage:          models.MetricAggregate{P50: 2, P95: 5, P99: 8, Max: 10},
 			cpuRequestMillis:  1000,
 			dataWindowMinutes: 2000, // ~33 hours < 48h
-			want:              models.PatternBurstable, // Can't check idle; CV = (5-2)/2 = 1.5 > 0.3
+			want:              models.PatternSteady, // P50=2 < 25m floor; Max=10 < 100m spike floor -> steady
 		},
 		{
 			name:              "batch — extreme spikes, non-idle baseline",
@@ -140,6 +140,34 @@ func TestClassifyWorkload(t *testing.T) {
 			cpuRequestMillis:  500,
 			dataWindowMinutes: 1,
 			want:              models.PatternSteady, // CV = 0
+		},
+		{
+			name:              "near-zero P50 daemon — classified steady not batch",
+			cpuUsage:          models.MetricAggregate{P50: 1, P95: 3, P99: 5, Max: 10},
+			cpuRequestMillis:  0, // no request → idle check skipped
+			dataWindowMinutes: 10080,
+			want:              models.PatternSteady, // P50=1 < 25m floor; Max=10 < 100m spike floor
+		},
+		{
+			name:              "low baseline with real spikes — burstable",
+			cpuUsage:          models.MetricAggregate{P50: 5, P95: 50, P99: 200, Max: 500},
+			cpuRequestMillis:  0, // no request → idle check skipped
+			dataWindowMinutes: 10080,
+			want:              models.PatternBurstable, // P50=5 < 25m floor; Max=500 >= 100m spike floor
+		},
+		{
+			name:              "genuine batch unchanged",
+			cpuUsage:          models.MetricAggregate{P50: 200, P95: 800, P99: 1500, Max: 2000},
+			cpuRequestMillis:  4000,
+			dataWindowMinutes: 10080,
+			want:              models.PatternBatch, // P50=200 >= 25m; P99/P50=7.5 >= 5, Max/P50=10 >= 10
+		},
+		{
+			name:              "P50 just at floor boundary — proceeds to CV",
+			cpuUsage:          models.MetricAggregate{P50: 25, P95: 30, P99: 35, Max: 40},
+			cpuRequestMillis:  500,
+			dataWindowMinutes: 10080,
+			want:              models.PatternSteady, // P50=25 not < 25 (at floor); CV = (30-25)/25 = 0.2 < 0.3
 		},
 	}
 

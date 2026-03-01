@@ -187,10 +187,8 @@ func TestGenerateCPURecommendation_AlreadyRightSized(t *testing.T) {
 
 func TestGenerateCPURecommendation_MinimumFloor(t *testing.T) {
 	// Very low usage -- should not recommend below 10m CPU.
-	// P50=1, P95=2, P99=3, Max=5 -> Steady (CV = (2-1)/1 = 1.0 -> Burstable actually)
-	// Check: CV = (P95-P50)/P50 = (2-1)/1 = 1.0 > 0.3 -> Burstable
-	// P99/P50 = 3, Max/P50 = 5 -> not batch (3 < 5 threshold)
-	// RecReq = P50 * 1.20 = 1.2, floor to 10
+	// P50=1, req=1000, window=10080: idle check fires first (P50/req=0.001 < 0.05, window >= 48h).
+	// Idle: RecReq = max(P95 * 1.20, 10) = max(2.4, 10) = 10
 	// RecLimit = max(P99 * 1.20, 10) = max(3.6, 10) = 10
 	// Savings = 1000 - 10 = 990
 	usage := models.MetricAggregate{P50: 1, P95: 2, P99: 3, Max: 5}
@@ -201,6 +199,7 @@ func TestGenerateCPURecommendation_MinimumFloor(t *testing.T) {
 	assert.Equal(t, int64(minRecommendedCPUMillis), rec.RecommendedReq)
 	assert.Equal(t, int64(minRecommendedCPUMillis), rec.RecommendedLimit)
 	assert.Equal(t, int64(990), rec.EstSavings)
+	assert.Equal(t, models.PatternIdle, rec.Pattern)
 	assertSafetyInvariant_CPU(t, rec, usage)
 }
 
