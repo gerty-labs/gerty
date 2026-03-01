@@ -1,4 +1,4 @@
-.PHONY: build test lint clean docker-build dev-cluster dev-deploy test-integration backtest
+.PHONY: build test lint clean docker-build dev-cluster dev-deploy test-integration backtest test-safety
 
 BINARY_DIR := bin
 
@@ -29,6 +29,9 @@ dev-deploy:
 
 backtest:
 	go test ./test/backtest/... -v -count=1
+
+test-safety:
+	go test ./test/safety/... -v -count=1
 
 test-integration:
 	go test ./test/integration/... -v -tags=integration
