@@ -6,7 +6,7 @@
 set -euo pipefail
 
 DURATION="${1:-300}"
-NS="sage-test"
+NS="sage-dogfood"
 
 # Determine load tool.
 LOAD_TOOL=""
