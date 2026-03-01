@@ -55,6 +55,16 @@ func (c *Collector) Run(ctx context.Context) {
 	}
 }
 
+// podResourceInfo holds resource requests/limits and metadata for a container.
+type podResourceInfo struct {
+	cpuRequestMillis int64
+	cpuLimitMillis   int64
+	memRequestBytes  int64
+	memLimitBytes    int64
+	restartCount     int32
+	qosClass         string
+}
+
 // collect performs a single scrape of the kubelet Summary API and records metrics.
 func (c *Collector) collect(ctx context.Context) {
 	summary, err := c.client.GetSummary(ctx)
@@ -62,6 +72,9 @@ func (c *Collector) collect(ctx context.Context) {
 		slog.Error("failed to collect metrics from kubelet", "error", err)
 		return
 	}
+
+	// Fetch pod specs to get resource requests/limits.
+	resourceMap := c.fetchPodResources(ctx)
 
 	now := time.Now()
 	recorded := 0
@@ -88,12 +101,57 @@ func (c *Collector) collect(ctx context.Context) {
 				}
 			}
 
+			// Merge resource requests/limits from pod spec.
+			key := pod.PodRef.Namespace + "/" + pod.PodRef.Name + "/" + container.Name
+			if info, ok := resourceMap[key]; ok {
+				m.CPURequestMillis = info.cpuRequestMillis
+				m.CPULimitMillis = info.cpuLimitMillis
+				m.MemoryRequestBytes = info.memRequestBytes
+				m.MemoryLimitBytes = info.memLimitBytes
+				m.RestartCount = info.restartCount
+				m.QoSClass = info.qosClass
+			}
+
 			c.store.Record(m)
 			recorded++
 		}
 	}
 
 	slog.Debug("metrics collected", "pods", len(summary.Pods), "containers", recorded)
+}
+
+// fetchPodResources calls the kubelet /pods endpoint to get resource requests/limits.
+// Returns a map keyed by namespace/pod/container.
+func (c *Collector) fetchPodResources(ctx context.Context) map[string]podResourceInfo {
+	result := make(map[string]podResourceInfo)
+
+	podList, err := c.client.GetPods(ctx)
+	if err != nil {
+		slog.Warn("failed to fetch pod specs from kubelet", "error", err)
+		return result
+	}
+
+	for _, pod := range podList.Items {
+		// Build restart count map from status.
+		restartCounts := make(map[string]int32)
+		for _, cs := range pod.Status.ContainerStatuses {
+			restartCounts[cs.Name] = cs.RestartCount
+		}
+
+		for _, container := range pod.Spec.Containers {
+			key := pod.Metadata.Namespace + "/" + pod.Metadata.Name + "/" + container.Name
+			result[key] = podResourceInfo{
+				cpuRequestMillis: parseCPUToMillis(container.Resources.Requests.CPU),
+				cpuLimitMillis:   parseCPUToMillis(container.Resources.Limits.CPU),
+				memRequestBytes:  parseMemoryToBytes(container.Resources.Requests.Memory),
+				memLimitBytes:    parseMemoryToBytes(container.Resources.Limits.Memory),
+				restartCount:     restartCounts[container.Name],
+				qosClass:         pod.Status.QOSClass,
+			}
+		}
+	}
+
+	return result
 }
 
 // CollectOnce performs a single collection. Useful for testing.

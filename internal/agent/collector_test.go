@@ -11,14 +11,22 @@ import (
 
 // mockKubeletClient implements KubeletClient for testing.
 type mockKubeletClient struct {
-	response *SummaryResponse
-	err      error
-	calls    int
+	response    *SummaryResponse
+	podResponse *PodListResponse
+	err         error
+	calls       int
 }
 
 func (m *mockKubeletClient) GetSummary(ctx context.Context) (*SummaryResponse, error) {
 	m.calls++
 	return m.response, m.err
+}
+
+func (m *mockKubeletClient) GetPods(ctx context.Context) (*PodListResponse, error) {
+	if m.podResponse != nil {
+		return m.podResponse, nil
+	}
+	return &PodListResponse{}, nil
 }
 
 func uint64Ptr(v uint64) *uint64 { return &v }

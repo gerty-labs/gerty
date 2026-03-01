@@ -53,9 +53,57 @@ type MemStats struct {
 	AvailableBytes  *uint64   `json:"availableBytes,omitempty"`
 }
 
+// PodListResponse mirrors the kubelet /pods JSON structure (a PodList).
+type PodListResponse struct {
+	Items []PodItem `json:"items"`
+}
+
+// PodItem is a minimal representation of a Pod from the kubelet /pods endpoint.
+type PodItem struct {
+	Metadata PodItemMeta `json:"metadata"`
+	Spec     PodSpec     `json:"spec"`
+	Status   PodStatus   `json:"status"`
+}
+
+type PodItemMeta struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+type PodSpec struct {
+	Containers []PodSpecContainer `json:"containers"`
+}
+
+type PodSpecContainer struct {
+	Name      string                `json:"name"`
+	Resources ContainerResourceSpec `json:"resources"`
+}
+
+type ContainerResourceSpec struct {
+	Requests ResourceValues `json:"requests"`
+	Limits   ResourceValues `json:"limits"`
+}
+
+// ResourceValues holds CPU and memory resource strings from the pod spec.
+type ResourceValues struct {
+	CPU    string `json:"cpu"`
+	Memory string `json:"memory"`
+}
+
+type PodStatus struct {
+	QOSClass         string            `json:"qosClass"`
+	ContainerStatuses []ContainerStatus `json:"containerStatuses"`
+}
+
+type ContainerStatus struct {
+	Name         string `json:"name"`
+	RestartCount int32  `json:"restartCount"`
+}
+
 // KubeletClient abstracts access to the kubelet Summary API for testability.
 type KubeletClient interface {
 	GetSummary(ctx context.Context) (*SummaryResponse, error)
+	GetPods(ctx context.Context) (*PodListResponse, error)
 }
 
 // httpKubeletClient implements KubeletClient by calling the kubelet REST API.
@@ -83,6 +131,37 @@ func NewHTTPKubeletClient(baseURL string) *httpKubeletClient {
 		},
 		token: string(tokenBytes),
 	}
+}
+
+func (c *httpKubeletClient) GetPods(ctx context.Context) (*PodListResponse, error) {
+	url := fmt.Sprintf("%s/pods", c.baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating kubelet pods request: %w", err)
+	}
+
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("calling kubelet pods API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("kubelet pods returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var podList PodListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&podList); err != nil {
+		return nil, fmt.Errorf("decoding kubelet pods response: %w", err)
+	}
+
+	return &podList, nil
 }
 
 func (c *httpKubeletClient) GetSummary(ctx context.Context) (*SummaryResponse, error) {
