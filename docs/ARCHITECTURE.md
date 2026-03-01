@@ -163,7 +163,7 @@ if mean(cpu_usage) < 0.05 * cpu_request for >48h:
     pattern = IDLE
 elif cv < 0.3:
     pattern = STEADY
-elif has_periodic_spikes(cpu_usage):
+elif P99/P50 >= 5 AND Max/P50 >= 10:
     pattern = BATCH
 else:
     pattern = BURSTABLE
@@ -231,77 +231,12 @@ A specialist model trained on this domain knowledge will be smaller, faster, and
 
 If Phi-3 proves too large for customer environments, fall back to TinyLlama with a more focused training dataset.
 
-#### Training Data Strategy
+#### Training Data and Fine-Tuning
 
-The training dataset is structured as instruction-tuning pairs in JSONL format. Each example has a system prompt, a user message containing metrics/context, and an assistant response with analysis and recommendations.
+The training dataset targets 12,000 instruction pairs (85% real sources, 15% synthetic gap-fillers) and the model is fine-tuned via LoRA on Phi-3 Mini 4K Instruct, then quantised to GGUF Q4_K_M for CPU-only serving via Ollama. Full details are maintained in dedicated documents to avoid drift:
 
-**Data Sources**:
-
-| Source | Type | Volume (est.) | Content |
-|--------|------|---------------|---------|
-| K8s official docs | Extracted text | ~2k pairs | Resource management, QoS, VPA, HPA, LimitRange, ResourceQuota best practices |
-| VPA recommender source code | Logic extraction | ~500 pairs | How VPA calculates recommendations (translated to natural language) |
-| Kubernetes GitHub issues | Filtered/curated | ~2k pairs | Real-world resource problems and solutions |
-| Stack Overflow | Filtered K8s resource Qs | ~1.5k pairs | Community knowledge on right-sizing |
-| Cloud provider docs | GKE, EKS, AKS guides | ~1k pairs | Provider-specific best practices |
-| Synthetic generation | Programmatic | ~5k pairs | Metric patterns → recommendation pairs generated from rules engine logic |
-| Expert knowledge | Hand-written | ~500 pairs | Edge cases, anti-patterns, runtime-specific guidance (JVM, Go, Python, Node.js) |
-
-**Target**: 10,000–15,000 high-quality instruction pairs for initial fine-tune.
-
-**Example Training Pair**:
-```json
-{
-  "system": "You are k8s-sage, a Kubernetes resource efficiency specialist. Analyse the provided workload metrics and provide right-sizing recommendations.",
-  "user": "Workload: deployment/api-gateway in namespace production\nReplicas: 3\nContainer: nginx\nCPU Request: 2000m, Limit: 4000m\nMemory Request: 2Gi, Limit: 4Gi\nCPU Usage (7d): P50=120m, P95=340m, P99=890m, Max=1200m\nMemory Usage (7d): P50=256Mi, P95=310Mi, P99=380Mi, Max=420Mi\nPattern: Burstable with periodic spikes every 4 hours\nRestarts (7d): 0\nQoS: Burstable",
-  "assistant": "## Analysis\n\nThis deployment is significantly over-provisioned for both CPU and memory.\n\n**CPU**: Requesting 2000m but P95 usage is only 340m — that's 83% waste at the request level. The periodic spikes to ~900m (P99) suggest this handles scheduled traffic bursts, likely health checks or batch processing every 4 hours.\n\n**Memory**: Requesting 2Gi but P99 usage is 380Mi — 81% waste. The stable memory profile with no restarts suggests nginx is configured with a fixed worker pool. Memory usage is predictable.\n\n## Recommendations\n\n**CPU**: Reduce request to 500m (P95 + 47% headroom), keep limit at 2000m to accommodate spikes. This handles the burstable pattern safely.\n- Confidence: 0.85\n- Risk: LOW\n- Savings per replica: 1500m CPU\n- Savings total (3 replicas): 4500m CPU\n\n**Memory**: Reduce request to 512Mi (P99 + 35% headroom), reduce limit to 1Gi.\n- Confidence: 0.90\n- Risk: LOW\n- Savings per replica: 1.5Gi memory\n- Savings total (3 replicas): 4.5Gi memory\n\n## Notes\n\nnginx memory usage is typically very stable once workers are initialised. The 35% headroom above P99 is conservative and safe for this workload type. Monitor for 48h after applying changes."
-}
-```
-
-#### Fine-Tuning Approach
-
-```
-Base model:     Phi-3 Mini 4K Instruct (3.8B)
-Method:         LoRA (Low-Rank Adaptation)
-LoRA rank:      16 (balance of quality and training speed)
-LoRA alpha:     32
-Target modules: q_proj, k_proj, v_proj, o_proj
-Learning rate:  2e-4
-Batch size:     4 (gradient accumulation to effective 16)
-Epochs:         3
-Hardware:       Single GPU (RTX 3090/4090 or cloud A100)
-Training time:  ~4–8 hours (estimated)
-```
-
-Post-training:
-1. Merge LoRA adapters into base model
-2. Quantize to GGUF Q4_K_M format
-3. Create Ollama Modelfile with system prompt
-4. Benchmark against base Phi-3 and GPT-4 on held-out test set
-
-#### Model Serving
-
-The model runs as a single Deployment via Ollama, NOT per-node:
-
-```yaml
-# values.yaml
-slm:
-  enabled: false  # Off by default, opt-in
-  image: ollama/ollama:latest
-  model: k8s-sage:q4  # Custom model pushed to Ollama
-  resources:
-    requests:
-      cpu: "1"
-      memory: "3Gi"
-    limits:
-      cpu: "2"
-      memory: "4Gi"
-```
-
-The server communicates with the model via Ollama's REST API. The SLM is invoked:
-- On-demand via CLI (`sage analyze --explain`)
-- On a schedule (e.g., daily cluster report with natural language insights)
-- NOT on every metrics scrape — that would be absurdly wasteful
+- **[TRAINING_DATA.md](TRAINING_DATA.md)** — Source breakdown, JSONL schema, quality criteria, deduplication strategy, and provenance tracking. The canonical system prompt for all training pairs is defined here.
+- **[MODEL_DESIGN.md](MODEL_DESIGN.md)** — Base model rationale, LoRA configuration, post-training pipeline, Ollama Modelfile, serving architecture, and evaluation plan.
 
 #### SLM Integration in the Server
 
@@ -374,6 +309,7 @@ GET  /api/v1/workloads                  All workloads with waste summary
 GET  /api/v1/workloads/{ns}/{kind}/{name}  Specific workload detail
 GET  /api/v1/recommendations            All recommendations
 GET  /api/v1/recommendations?risk=low   Filtered recommendations
+POST /api/v1/ingest                     Agent push endpoint (NodeReport JSON)
 POST /api/v1/analyze                    Trigger on-demand analysis
 POST /api/v1/explain                    SLM-powered explanation (requires model)
 ```

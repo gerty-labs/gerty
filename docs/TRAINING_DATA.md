@@ -12,7 +12,7 @@ The k8s-sage SLM requires a curated instruction-tuning dataset of Kubernetes res
 
 | Source | Type | Volume (est.) | Content | Licence |
 |--------|------|---------------|---------|---------|
-| K8s official docs + GKE/EKS/AKS | Extracted + transformed | ~3,500 pairs | Resource management, QoS classes, VPA/HPA, LimitRange, ResourceQuota, provider-specific best practices | Apache 2.0 (K8s), proprietary (provider docs — fair use for training) |
+| K8s official docs + GKE/EKS/AKS | Extracted + transformed | ~3,500 pairs | Resource management, QoS classes, VPA/HPA, LimitRange, ResourceQuota, provider-specific best practices | Apache 2.0 (K8s), proprietary (provider docs — legal review required; fair use for ML training is unsettled) |
 | GitHub issues | Filtered + curated | ~3,000 pairs | Real-world resource problems from kubernetes/kubernetes, helm charts, operator repos | Varies by repo — check each repo's licence |
 | Stack Overflow | Filtered for quality | ~2,000 pairs | Community Q&A on K8s resource configuration, OOMKill debugging, CPU throttling | CC BY-SA 4.0 — attribution required |
 | VPA recommender + Goldilocks + Kubecost | Logic extraction | ~800 pairs | How existing tools calculate recommendations, translated to natural language explanations | Apache 2.0 (VPA, Goldilocks), check Kubecost |
@@ -117,7 +117,7 @@ Each training example is a JSON object on a single line:
   "source": "expert",
   "system": "You are k8s-sage, a Kubernetes resource efficiency specialist. Analyse the provided workload metrics and give actionable right-sizing recommendations. Be specific about numbers, explain your reasoning, and flag risks.",
   "user": "Workload: deployment/payment-service in namespace production\nReplicas: 2\nContainer: app (eclipse-temurin:17-jre)\nCPU Request: 2000m, Limit: 4000m\nMemory Request: 4Gi, Limit: 4Gi\nCPU Usage (7d): P50=180m, P95=420m, P99=680m, Max=1100m\nMemory Usage (7d): P50=2.8Gi, P95=3.1Gi, P99=3.4Gi, Max=3.6Gi\nMemory Working Set (7d): P50=2.6Gi, P95=2.9Gi, P99=3.2Gi, Max=3.4Gi\nPattern: Steady\nRestarts (7d): 0\nQoS: Burstable\nJVM flags: -Xmx3g -Xms1g -XX:+UseG1GC",
-  "assistant": "## Analysis\n\n**CPU**: Requesting 2000m but P95 is 420m — 79% waste. The steady pattern with occasional spikes to 1100m suggests this handles synchronous request processing with periodic batch operations.\n\n**Memory**: This is a JVM workload with -Xmx3g. The high memory usage (P50=2.8Gi) is expected — the JVM reserves heap up to the -Xmx value and the G1GC collector will use most of it. This is NOT waste. The working set closely tracks total usage, confirming heap is actively used.\n\n## Recommendations\n\n**CPU**: Reduce request to 510m (P95 + 20% headroom). Keep limit at 1500m to handle the P99 spikes safely.\n- Savings per replica: 1490m\n- Risk: LOW (limit well above P99)\n\n**Memory**: Do NOT reduce memory request. The 4Gi request matches the JVM's -Xmx3g + ~1Gi for metaspace, thread stacks, and native memory. Reducing below 3.5Gi risks OOMKill during full GC cycles when both old and young generation are in memory.\n- Recommendation: Keep at 4Gi\n- Risk of reducing: HIGH (JVM OOMKill)\n\n## Key Insight\n\nFor JVM workloads, always check -Xmx before recommending memory reductions. The difference between memory usage and -Xmx is not waste — it's GC headroom the JVM needs to function correctly.",
+  "assistant": "## Analysis\n\n**CPU**: Requesting 2000m but P95 is 420m — 79% waste. The steady pattern with occasional spikes to 1100m suggests this handles synchronous request processing with periodic batch operations.\n\n**Memory**: This is a JVM workload with -Xmx3g. The high memory usage (P50=2.8Gi) is expected — the JVM reserves heap up to the -Xmx value and the G1GC collector will use most of it. This is NOT waste. The working set closely tracks total usage, confirming heap is actively used.\n\n## Recommendations\n\n**CPU**: Reduce request to 504m (P95 × 1.20). Keep limit at 1500m to handle the P99 spikes safely.\n- Savings per replica: 1496m\n- Risk: LOW (limit well above P99)\n\n**Memory**: Do NOT reduce memory request. The 4Gi request matches the JVM's -Xmx3g + ~1Gi for metaspace, thread stacks, and native memory. Reducing below 3.5Gi risks OOMKill during full GC cycles when both old and young generation are in memory.\n- Recommendation: Keep request at 4Gi, keep limit at 4Gi\n- Risk of reducing: HIGH (JVM OOMKill)\n\n## Key Insight\n\nFor JVM workloads, always check -Xmx before recommending memory reductions. The difference between memory usage and -Xmx is not waste — it's GC headroom the JVM needs to function correctly.",
   "metadata": {
     "category": "runtime-specific",
     "runtime": "jvm",
@@ -133,7 +133,7 @@ Each training example is a JSON object on a single line:
 |-------|------|----------|-------------|
 | `id` | string | yes | Unique identifier: `{source}-{category}-{sequence}` |
 | `source` | enum | yes | One of: `k8s-docs`, `github`, `stackoverflow`, `vpa-source`, `expert`, `synthetic` |
-| `system` | string | yes | System prompt — consistent across all pairs |
+| `system` | string | yes | Canonical system prompt — must be identical across all training pairs (defined in the schema example above). Other documents reference this definition. |
 | `user` | string | yes | Metrics context + question/scenario |
 | `assistant` | string | yes | Analysis + recommendation (min 50 chars) |
 | `metadata.category` | enum | yes | `right-sizing`, `classification`, `runtime-specific`, `edge-case` |
@@ -164,6 +164,17 @@ Every recommendation in a training pair must satisfy:
 - CPU floor: 10m, Memory floor: 4Mi
 - `recommended_limit >= recommended_request`
 
+### Confidence Caps
+
+Confidence values in training pairs must respect the rules engine caps:
+- Steady pattern with 7+ days data: max 0.95
+- Steady pattern with 3–7 days data: max 0.85
+- Any pattern with <3 days data: max 0.50
+- Burstable pattern: max 0.80 (inherently less predictable)
+- Batch pattern: max 0.70 (needs multiple execution cycles)
+
+Training pairs with confidence values exceeding these caps will fail validation. The SLM must not learn to output overconfident scores that contradict the rules engine.
+
 ### Content Quality
 
 - Assistant responses must be at least 50 characters
@@ -175,7 +186,7 @@ Every recommendation in a training pair must satisfy:
 ### Deduplication Strategy
 
 1. **Exact dedup**: Remove pairs where user+assistant text is identical
-2. **Semantic dedup**: Cluster pairs by embedding similarity (sentence-transformers). Within each cluster, keep the highest-quality pair (longest assistant response with concrete numbers)
+2. **Semantic dedup**: Cluster pairs by cosine similarity using `all-MiniLM-L6-v2` embeddings (sentence-transformers). Within each cluster, keep the highest-quality pair (longest assistant response with concrete numbers)
 3. **Source dedup**: If the same K8s doc section produces multiple overlapping pairs, keep the most operationally useful one
 4. **Cross-source dedup**: If a GitHub issue and SO question cover the same scenario, keep the one with more detail
 

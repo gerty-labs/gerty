@@ -142,6 +142,8 @@ When you see low CPU usage, distinguish between idle workloads and event-driven 
 Always consider the workload pattern (steady, burstable, batch, idle) when making recommendations."""
 ```
 
+The Modelfile system prompt extends the canonical training prompt (defined in [TRAINING_DATA.md](TRAINING_DATA.md)) with inference-time operational instructions. The base prompt must remain consistent between training and serving.
+
 **Why temperature 0.3**: We want consistent, reproducible recommendations. Higher temperature introduces randomness that undermines trust. 0.3 allows slight variation in phrasing while keeping numbers stable.
 
 ---
@@ -205,9 +207,10 @@ Create a held-out test set of 500 pairs (not used in training) covering:
 
 | Model | Expected Performance | Purpose |
 |-------|---------------------|---------|
+| k8s-sage rules engine only | ~75% accuracy | Baseline — does the model add value over deterministic rules? |
 | Base Phi-3 Mini (no fine-tune) | ~40% accuracy | Baseline — how much does fine-tuning help? |
 | k8s-sage SLM (fine-tuned) | ~85% accuracy | Target |
-| GPT-4 (prompted) | ~70% accuracy | Ceiling reference — expensive but general |
+| GPT-4 (prompted) | ~60-75% (to be benchmarked) | Ceiling reference — expensive but general |
 
 "Accuracy" means: recommendation is within 20% of the ground truth, pattern classification is correct, and no safety violations (recommending below P99 for memory, recommending 0, etc.).
 
@@ -217,7 +220,7 @@ Every model output is validated against the same safety invariants as the rules 
 - Memory recommendation >= P99 working set * 1.10
 - CPU recommendation >= P95 * headroom (pattern-dependent)
 - No recommendation of 0 for any resource
-- No recommendation exceeding current request (that's an upsize, not a right-size recommendation from the model's perspective — the rules engine handles those separately)
+- Upsize recommendations (exceeding current request) are valid for under-provisioned workloads (e.g., OOMKill, CPU throttling) but are evaluated separately from right-sizing accuracy. The accuracy metric only covers downsizing scenarios
 
 If the model violates safety invariants, the rules engine output is used instead (graceful degradation).
 
@@ -229,6 +232,6 @@ If the model violates safety invariants, the rules engine output is used instead
 |------|--------|------------|
 | Model hallucinates specific numbers | Wrong recommendations | Safety invariant check against rules engine output; reject if divergent by >50% |
 | Overfitting to training data phrasing | Brittle on novel inputs | Diverse training data, validation set monitoring, temperature 0.3 |
-| Model too large for customer environments | Can't deploy | Fall back to TinyLlama 1.1B (~1GB) or rules-engine-only mode |
+| Model too large for customer environments | Can't deploy | If target environment has <4GB RAM available for the SLM pod, fall back to TinyLlama 1.1B with Q4 quantisation (~1GB RAM). If <1GB available, use rules-engine-only mode |
 | Quantisation degrades quality | Worse than base model | Benchmark Q4 vs fp16 on test set; if >5% degradation, use Q5 |
 | Training data contains errors | Model learns wrong patterns | Human review of all expert pairs, automated validation of metric plausibility |
