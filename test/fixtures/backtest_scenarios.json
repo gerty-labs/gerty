@@ -1,0 +1,1352 @@
+{
+  "description": "Backtest scenarios for k8s-sage rules engine. ALL expected values are hand-calculated from the constants in internal/rules/recommendations.go and internal/rules/patterns.go. Do NOT derive expected values by running the code.",
+  "constants_reference": {
+    "headroomSteady": 1.20,
+    "headroomBurstableReq": 1.30,
+    "headroomBurstableLimit": 1.25,
+    "headroomBatchLimit": 1.10,
+    "cvSteadyThreshold": 0.30,
+    "idleUtilisationThreshold": 0.05,
+    "idleMinDataWindow_min": 2880,
+    "batchSpikeRatio": 5.0,
+    "batchIdleRatio": 10.0,
+    "minCPUMillis": 10,
+    "minMemBytes": 4194304,
+    "wasteThresholdPercent": 10.0,
+    "confidenceMaxSteady7d": 0.95,
+    "confidenceMaxSteady3to7d": 0.85,
+    "confidenceMaxShortWindow": 0.50,
+    "confidenceCapBurstable": 0.80,
+    "confidenceCapBatch": 0.70
+  },
+  "scenarios": [
+    {
+      "id": "steady-01",
+      "name": "Steady — low utilisation (10%)",
+      "category": "steady",
+      "description": "Web server requesting 1000m but using ~100m. CV=(120-100)/100=0.20 < 0.30 → Steady.",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 120, "P99": 140, "Max": 160},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 50000000, "P95": 60000000, "P99": 70000000, "Max": 80000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 144,
+          "recommendedLimit": 175,
+          "estSavings": 856,
+          "confidence": 0.95,
+          "risk": "MEDIUM",
+          "calculation": "recReq/P99=144.0/140=1.029<1.10→MEDIUM"
+        },
+        "memory": {
+          "recommendedReq": 84000000,
+          "recommendedLimit": 100000000,
+          "estSavings": 416000000,
+          "confidence": 0.90,
+          "risk": "MEDIUM",
+          "calculation": "memRisk: 84M/80M=1.05<1.10→MEDIUM"
+        }
+      }
+    },
+    {
+      "id": "steady-02",
+      "name": "Steady — low utilisation (20%)",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 200, "P95": 230, "P99": 260, "Max": 300},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 100000000, "P95": 130000000, "P99": 150000000, "Max": 180000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 276,
+          "recommendedLimit": 325,
+          "estSavings": 724,
+          "confidence": 0.95,
+          "risk": "MEDIUM",
+          "calculation": "recReq/P99=276.0/260=1.062<1.10→MEDIUM"
+        },
+        "memory": {
+          "recommendedReq": 180000000,
+          "recommendedLimit": 225000000,
+          "estSavings": 820000000,
+          "confidence": 0.90,
+          "risk": "MEDIUM",
+          "calculation": "memRisk: 180M/180M=1.0, >=1.0 but <1.10→MEDIUM"
+        }
+      }
+    },
+    {
+      "id": "steady-03",
+      "name": "Steady — low utilisation (30%)",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 300, "P95": 350, "P99": 380, "Max": 420},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 200000000, "P95": 240000000, "P99": 270000000, "Max": 310000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 420,
+          "recommendedLimit": 475,
+          "estSavings": 580,
+          "confidence": 0.95,
+          "risk": "LOW",
+          "calculation": "CV=(350-300)/300=0.167<0.30→Steady. req=ceil(350*1.20)=420, limit=ceil(380*1.25)=475, savings=1000-420=580, waste%=58>10, risk: 420/380=1.105→LOW"
+        },
+        "cpuRisk": "LOW",
+        "memory": {
+          "recommendedReq": 324000000,
+          "recommendedLimit": 387500000,
+          "estSavings": 676000000,
+          "confidence": 0.90,
+          "risk": "MEDIUM",
+          "calculation": "memRisk: 324M/310M=1.045<1.10→MEDIUM"
+        }
+      }
+    },
+    {
+      "id": "steady-04",
+      "name": "Steady — moderate utilisation (50%)",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 500, "P95": 560, "P99": 600, "Max": 650},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 400000000, "P95": 450000000, "P99": 480000000, "Max": 520000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 672,
+          "recommendedLimit": 750,
+          "estSavings": 328,
+          "confidence": 0.95,
+          "risk": "LOW",
+          "calculation": "CV=(560-500)/500=0.12<0.30→Steady. req=ceil(560*1.20)=672, limit=ceil(600*1.25)=750, savings=1000-672=328, waste%=32.8>10, risk: 672/600=1.12→LOW"
+        },
+        "cpuRisk": "LOW",
+        "memory": {
+          "recommendedReq": 576000000,
+          "recommendedLimit": 650000000,
+          "estSavings": 424000000,
+          "confidence": 0.90,
+          "risk": "LOW",
+          "calculation": "req=ceil(480M*1.20)=576M, limit=ceil(520M*1.25)=650M, savings=1000M-576M=424M, memRisk: 576M/520M=1.108→LOW"
+        },
+        "memRisk": "LOW"
+      }
+    },
+    {
+      "id": "steady-05",
+      "name": "Steady — moderate utilisation (60%)",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 600, "P95": 680, "P99": 720, "Max": 780},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 500000000, "P95": 560000000, "P99": 600000000, "Max": 650000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 816,
+          "recommendedLimit": 900,
+          "estSavings": 184,
+          "confidence": 0.95,
+          "risk": "LOW",
+          "calculation": "CV=(680-600)/600=0.133<0.30→Steady. req=ceil(680*1.20)=816, limit=ceil(720*1.25)=900, savings=1000-816=184, waste%=18.4>10, risk: 816/720=1.133→LOW"
+        },
+        "cpuRisk": "LOW",
+        "memory": {
+          "recommendedReq": 720000000,
+          "recommendedLimit": 812500000,
+          "estSavings": 280000000,
+          "confidence": 0.90,
+          "risk": "LOW",
+          "calculation": "req=ceil(600M*1.20)=720M, limit=ceil(650M*1.25)=812.5M→813M, savings=1000M-720M=280M, memRisk: 720M/650M=1.108→LOW"
+        },
+        "memRisk": "LOW"
+      }
+    },
+    {
+      "id": "steady-06",
+      "name": "Steady — moderate utilisation (70%)",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 700, "P95": 780, "P99": 820, "Max": 870},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 600000000, "P95": 650000000, "P99": 700000000, "Max": 750000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 936,
+          "recommendedLimit": 1025,
+          "estSavings": 64,
+          "confidence": 0.95,
+          "risk": "LOW",
+          "calculation": "CV=(780-700)/700=0.114<0.30→Steady. req=ceil(780*1.20)=936, limit=ceil(820*1.25)=1025, savings=1000-936=64, waste%=6.4<10→NO RECOMMENDATION"
+        },
+        "cpuRecommendation": false,
+        "memory": {
+          "recommendedReq": 840000000,
+          "recommendedLimit": 937500000,
+          "estSavings": 160000000,
+          "confidence": 0.90,
+          "risk": "LOW",
+          "calculation": "steady mem: req=ceil(700M*1.20)=840M, limit=ceil(750M*1.25)=937.5M, savings=1000M-840M=160M, waste=16%>10, memRisk=840M/750M=1.12→LOW"
+        }
+      }
+    },
+    {
+      "id": "steady-07",
+      "name": "Steady — high utilisation (80%)",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 800, "P95": 870, "P99": 910, "Max": 950},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 700000000, "P95": 750000000, "P99": 800000000, "Max": 850000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpuRecommendation": false,
+        "memRecommendation": false,
+        "calculation": "CV=(870-800)/800=0.088<0.30→Steady. recReq=ceil(870*1.20)=1044>1000→savings negative→no rec"
+      }
+    },
+    {
+      "id": "steady-08",
+      "name": "Steady — high utilisation (90%)",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 900, "P95": 950, "P99": 980, "Max": 1000},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 850000000, "P95": 900000000, "P99": 930000000, "Max": 960000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpuRecommendation": false,
+        "memRecommendation": false,
+        "calculation": "CV=(950-900)/900=0.056<0.30→Steady. recReq=ceil(950*1.20)=1140>1000→savings negative→no rec"
+      }
+    },
+    {
+      "id": "steady-09",
+      "name": "Steady — already right-sized (P95 within 10%)",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 400, "P95": 450, "P99": 470, "Max": 490},
+        "cpuRequestMillis": 500,
+        "cpuLimitMillis": 1000,
+        "memUsage": {"P50": 400000000, "P95": 430000000, "P99": 450000000, "Max": 470000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpuRecommendation": false,
+        "memRecommendation": false,
+        "calculation": "CV=(450-400)/400=0.125<0.30→Steady. recReq=ceil(450*1.20)=540>500→savings negative→no rec"
+      }
+    },
+    {
+      "id": "steady-10",
+      "name": "Steady — 3 day data window (medium confidence)",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 120, "P99": 140, "Max": 160},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 50000000, "P95": 60000000, "P99": 70000000, "Max": 80000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 4320
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 144,
+          "recommendedLimit": 175,
+          "estSavings": 856,
+          "confidence": 0.85,
+          "risk": "MEDIUM",
+          "calculation": "Same CPU as steady-01. conf=0.85 (3d boundary). risk: 144/140=1.029→MEDIUM"
+        }
+      }
+    },
+    {
+      "id": "steady-11",
+      "name": "Steady — 5 day data window (interpolated confidence)",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 120, "P99": 140, "Max": 160},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 50000000, "P95": 60000000, "P99": 70000000, "Max": 80000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 7200
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 144,
+          "recommendedLimit": 175,
+          "estSavings": 856,
+          "confidence": 0.90,
+          "risk": "MEDIUM",
+          "calculation": "conf=0.85+(2880/5760)*0.10=0.90. risk: 144/140=1.029→MEDIUM"
+        }
+      }
+    },
+    {
+      "id": "steady-12",
+      "name": "Steady — 1 day data window (low confidence)",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 120, "P99": 140, "Max": 160},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 50000000, "P95": 60000000, "P99": 70000000, "Max": 80000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 1440
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 144,
+          "recommendedLimit": 175,
+          "estSavings": 856,
+          "confidence": 0.30,
+          "risk": "MEDIUM",
+          "calculation": "conf=0.20+(1440/4320)*0.30=0.30. risk: 144/140=1.029→MEDIUM"
+        }
+      }
+    },
+    {
+      "id": "steady-13",
+      "name": "Steady — large deployment, very low CV",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 500, "P95": 510, "P99": 520, "Max": 530},
+        "cpuRequestMillis": 2000,
+        "cpuLimitMillis": 4000,
+        "memUsage": {"P50": 300000000, "P95": 310000000, "P99": 320000000, "Max": 330000000},
+        "memRequestBytes": 2000000000,
+        "memLimitBytes": 4000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 612,
+          "recommendedLimit": 650,
+          "estSavings": 1388,
+          "confidence": 0.95,
+          "risk": "LOW",
+          "calculation": "Steady. req=612, limit=650, savings=1388, risk: 612/520=1.177→LOW"
+        }
+      }
+    },
+    {
+      "id": "steady-14",
+      "name": "Steady — CV just below threshold (0.29)",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 129, "P99": 150, "Max": 170},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 50000000, "P95": 60000000, "P99": 70000000, "Max": 80000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 155,
+          "recommendedLimit": 188,
+          "estSavings": 845,
+          "confidence": 0.95,
+          "risk": "MEDIUM",
+          "calculation": "recReq=154.8, savings=int64(1000-154.8)=845, risk: 154.8/150=1.032<1.10→MEDIUM"
+        }
+      }
+    },
+    {
+      "id": "steady-15",
+      "name": "Steady — waste exactly at 10% threshold",
+      "category": "steady",
+      "input": {
+        "cpuUsage": {"P50": 700, "P95": 750, "P99": 800, "Max": 850},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 50000000, "P95": 60000000, "P99": 70000000, "Max": 80000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 900,
+          "recommendedLimit": 1000,
+          "estSavings": 100,
+          "confidence": 0.95,
+          "risk": "LOW",
+          "calculation": "CV=(750-700)/700=0.071<0.30→Steady. req=900, limit=1000, savings=100, waste%=10.0≥10→produces rec, risk=900/800=1.125→LOW"
+        }
+      }
+    },
+    {
+      "id": "burstable-01",
+      "name": "Burstable — regular spikes to 80%",
+      "category": "burstable",
+      "input": {
+        "cpuUsage": {"P50": 200, "P95": 400, "P99": 600, "Max": 800},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 100000000, "P95": 200000000, "P99": 300000000, "Max": 400000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 260,
+          "recommendedLimit": 750,
+          "estSavings": 740,
+          "confidence": 0.80,
+          "risk": "LOW",
+          "calculation": "Burstable. req=260, limit=750, savings=740, risk: limit/P99=750/600=1.25→LOW"
+        },
+        "memory": {
+          "recommendedReq": 375000000,
+          "recommendedLimit": 500000000,
+          "estSavings": 625000000,
+          "confidence": 0.76,
+          "risk": "HIGH",
+          "calculation": "burstable mem: req=375M, savings=625M, conf=0.80*0.95=0.76, memRisk: 375M/400M=0.9375<1.0→HIGH"
+        }
+      }
+    },
+    {
+      "id": "burstable-02",
+      "name": "Burstable — CV just above threshold (0.31)",
+      "category": "burstable",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 131, "P99": 150, "Max": 170},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 50000000, "P95": 60000000, "P99": 70000000, "Max": 80000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 130,
+          "recommendedLimit": 188,
+          "estSavings": 870,
+          "confidence": 0.80,
+          "risk": "LOW",
+          "calculation": "CV=0.31>0.30→Burstable. req=130, limit=188, savings=870, risk: 187.5/150=1.25→LOW"
+        }
+      }
+    },
+    {
+      "id": "burstable-03",
+      "name": "Burstable — irregular spikes (lower confidence short window)",
+      "category": "burstable",
+      "input": {
+        "cpuUsage": {"P50": 150, "P95": 400, "P99": 700, "Max": 900},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 100000000, "P95": 200000000, "P99": 300000000, "Max": 400000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 1440
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 195,
+          "recommendedLimit": 875,
+          "estSavings": 805,
+          "confidence": 0.30,
+          "risk": "LOW",
+          "calculation": "Burstable. req=195, limit=875, savings=805, conf=0.30, risk: 875/700=1.25→LOW"
+        }
+      }
+    },
+    {
+      "id": "burstable-04",
+      "name": "Burstable — spikes exceeding current limits",
+      "category": "burstable",
+      "input": {
+        "cpuUsage": {"P50": 300, "P95": 800, "P99": 1200, "Max": 1800},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 1000,
+        "memUsage": {"P50": 200000000, "P95": 500000000, "P99": 800000000, "Max": 1200000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 390,
+          "recommendedLimit": 1500,
+          "estSavings": 610,
+          "confidence": 0.80,
+          "risk": "LOW",
+          "calculation": "Burstable. req=390, limit=1500, savings=610, risk: 1500/1200=1.25→LOW"
+        }
+      }
+    },
+    {
+      "id": "burstable-05",
+      "name": "Burstable — moderate spikes with 5d data",
+      "category": "burstable",
+      "input": {
+        "cpuUsage": {"P50": 200, "P95": 350, "P99": 500, "Max": 650},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 100000000, "P95": 180000000, "P99": 250000000, "Max": 320000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 7200
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 260,
+          "recommendedLimit": 625,
+          "estSavings": 740,
+          "confidence": 0.80,
+          "risk": "LOW",
+          "calculation": "Burstable. req=260, limit=625, savings=740, conf=0.80, risk: 625/500=1.25→LOW"
+        }
+      }
+    },
+    {
+      "id": "burstable-06",
+      "name": "Burstable — high baseline with small spikes",
+      "category": "burstable",
+      "input": {
+        "cpuUsage": {"P50": 500, "P95": 700, "P99": 850, "Max": 950},
+        "cpuRequestMillis": 2000,
+        "cpuLimitMillis": 4000,
+        "memUsage": {"P50": 300000000, "P95": 420000000, "P99": 500000000, "Max": 580000000},
+        "memRequestBytes": 2000000000,
+        "memLimitBytes": 4000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 650,
+          "recommendedLimit": 1063,
+          "estSavings": 1350,
+          "confidence": 0.80,
+          "risk": "LOW",
+          "calculation": "Burstable. req=650, limit=1063, savings=1350, risk: 1062.5/850=1.25→LOW"
+        }
+      }
+    },
+    {
+      "id": "burstable-07",
+      "name": "Burstable — very spiky but not batch (P99/P50 < 5)",
+      "category": "burstable",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 300, "P99": 490, "Max": 990},
+        "cpuRequestMillis": 2000,
+        "cpuLimitMillis": 4000,
+        "memUsage": {"P50": 50000000, "P95": 100000000, "P99": 150000000, "Max": 200000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 130,
+          "recommendedLimit": 613,
+          "estSavings": 1870,
+          "confidence": 0.80,
+          "risk": "LOW",
+          "calculation": "Burstable. req=130, limit=613, savings=1870, risk: 612.5/490=1.25→LOW"
+        }
+      }
+    },
+    {
+      "id": "burstable-08",
+      "name": "Burstable — small request with big spikes",
+      "category": "burstable",
+      "input": {
+        "cpuUsage": {"P50": 50, "P95": 200, "P99": 240, "Max": 280},
+        "cpuRequestMillis": 500,
+        "cpuLimitMillis": 1000,
+        "memUsage": {"P50": 30000000, "P95": 80000000, "P99": 100000000, "Max": 120000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 65,
+          "recommendedLimit": 300,
+          "estSavings": 435,
+          "confidence": 0.80,
+          "risk": "LOW",
+          "calculation": "Burstable. req=65, limit=300, savings=435, risk: 300/240=1.25→LOW"
+        }
+      }
+    },
+    {
+      "id": "burstable-09",
+      "name": "Burstable — P50/req=0.051 (just above idle threshold)",
+      "category": "burstable",
+      "input": {
+        "cpuUsage": {"P50": 51, "P95": 200, "P99": 240, "Max": 280},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 30000000, "P95": 60000000, "P99": 80000000, "Max": 100000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 5000
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 67,
+          "recommendedLimit": 300,
+          "estSavings": 933,
+          "confidence": 0.80,
+          "risk": "LOW",
+          "calculation": "Burstable. req=67, limit=300, savings=int64(1000-66.3)=933, risk: 300/240=1.25→LOW"
+        }
+      }
+    },
+    {
+      "id": "burstable-10",
+      "name": "Burstable — extreme CV with 2d data",
+      "category": "burstable",
+      "input": {
+        "cpuUsage": {"P50": 50, "P95": 400, "P99": 450, "Max": 500},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 30000000, "P95": 80000000, "P99": 100000000, "Max": 120000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 2880
+      },
+      "expected": {
+        "pattern": "batch",
+        "cpu": {
+          "recommendedReq": 65,
+          "recommendedLimit": 550,
+          "estSavings": 935,
+          "confidence": 0.40,
+          "risk": "LOW",
+          "calculation": "BATCH (P99/P50=9>=5, Max/P50=10>=10). req=ceil(50*1.30)=65, limit=ceil(500*1.10)=550, savings=int64(1000-65)=935, conf: dw=2880<4320→0.20+(2880/4320)*0.30=0.40, min(0.40,0.70)=0.40, risk: 550/500=1.10→LOW"
+        }
+      }
+    },
+    {
+      "id": "batch-01",
+      "name": "Batch — classic short-lived high-CPU job",
+      "category": "batch",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 400, "P99": 800, "Max": 1500},
+        "cpuRequestMillis": 2000,
+        "cpuLimitMillis": 4000,
+        "memUsage": {"P50": 50000000, "P95": 100000000, "P99": 200000000, "Max": 400000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "batch",
+        "cpu": {
+          "recommendedReq": 130,
+          "recommendedLimit": 1650,
+          "estSavings": 1870,
+          "confidence": 0.70,
+          "risk": "LOW",
+          "calculation": "Batch. req=130, limit=1650, savings=1870, risk: 1650/1500=1.10→LOW"
+        }
+      }
+    },
+    {
+      "id": "batch-02",
+      "name": "Batch — exactly at spike ratio thresholds",
+      "category": "batch",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 300, "P99": 500, "Max": 1000},
+        "cpuRequestMillis": 2000,
+        "cpuLimitMillis": 4000,
+        "memUsage": {"P50": 50000000, "P95": 100000000, "P99": 200000000, "Max": 400000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "batch",
+        "cpu": {
+          "recommendedReq": 130,
+          "recommendedLimit": 1100,
+          "estSavings": 1870,
+          "confidence": 0.70,
+          "risk": "LOW",
+          "calculation": "Batch. req=130, limit=1100, savings=1870, risk: 1100/1000=1.10→LOW"
+        }
+      }
+    },
+    {
+      "id": "batch-03",
+      "name": "Batch — very extreme spike ratio",
+      "category": "batch",
+      "input": {
+        "cpuUsage": {"P50": 20, "P95": 200, "P99": 500, "Max": 1000},
+        "cpuRequestMillis": 1500,
+        "cpuLimitMillis": 3000,
+        "memUsage": {"P50": 20000000, "P95": 80000000, "P99": 150000000, "Max": 300000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "idle",
+        "cpu": {
+          "recommendedReq": 240,
+          "recommendedLimit": 625,
+          "estSavings": 1260,
+          "confidence": 0.95,
+          "risk": "HIGH",
+          "calculation": "IDLE (P50/req=20/1500=0.013<0.05, dw=10080>=2880). req=max(ceil(200*1.20),10)=240, limit=max(ceil(500*1.25),240)=625, savings=1500-240=1260, conf=0.95, risk: 240/500=0.48<1.0→HIGH"
+        }
+      }
+    },
+    {
+      "id": "batch-04",
+      "name": "Batch — P50/req exactly at idle boundary (0.05)",
+      "category": "batch",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 300, "P99": 600, "Max": 1200},
+        "cpuRequestMillis": 2000,
+        "cpuLimitMillis": 4000,
+        "memUsage": {"P50": 50000000, "P95": 150000000, "P99": 300000000, "Max": 500000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "batch",
+        "cpu": {
+          "recommendedReq": 130,
+          "recommendedLimit": 1320,
+          "estSavings": 1870,
+          "confidence": 0.70,
+          "risk": "LOW",
+          "calculation": "Batch. req=130, limit=1320, savings=1870, risk: 1320/1200=1.10→LOW"
+        }
+      }
+    },
+    {
+      "id": "batch-05",
+      "name": "Batch — moderate peak with low baseline",
+      "category": "batch",
+      "input": {
+        "cpuUsage": {"P50": 50, "P95": 200, "P99": 300, "Max": 600},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 30000000, "P95": 80000000, "P99": 150000000, "Max": 300000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "batch",
+        "cpu": {
+          "recommendedReq": 65,
+          "recommendedLimit": 660,
+          "estSavings": 935,
+          "confidence": 0.70,
+          "risk": "LOW",
+          "calculation": "Batch. req=65, limit=660, savings=935, risk: 660/600=1.10→LOW"
+        }
+      }
+    },
+    {
+      "id": "batch-06",
+      "name": "Batch — short data window (3d)",
+      "category": "batch",
+      "input": {
+        "cpuUsage": {"P50": 80, "P95": 300, "P99": 500, "Max": 900},
+        "cpuRequestMillis": 1500,
+        "cpuLimitMillis": 3000,
+        "memUsage": {"P50": 40000000, "P95": 100000000, "P99": 200000000, "Max": 350000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 4320
+      },
+      "expected": {
+        "pattern": "batch",
+        "cpu": {
+          "recommendedReq": 104,
+          "recommendedLimit": 990,
+          "estSavings": 1396,
+          "confidence": 0.70,
+          "risk": "LOW",
+          "calculation": "Batch. req=104, limit=990, savings=1396, conf=0.70, risk: 990/900=1.10→LOW"
+        }
+      }
+    },
+    {
+      "id": "batch-07",
+      "name": "Batch — high baseline, extreme max spike",
+      "category": "batch",
+      "input": {
+        "cpuUsage": {"P50": 200, "P95": 600, "P99": 1200, "Max": 3000},
+        "cpuRequestMillis": 4000,
+        "cpuLimitMillis": 8000,
+        "memUsage": {"P50": 100000000, "P95": 300000000, "P99": 600000000, "Max": 1500000000},
+        "memRequestBytes": 4000000000,
+        "memLimitBytes": 8000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "batch",
+        "cpu": {
+          "recommendedReq": 260,
+          "recommendedLimit": 3300,
+          "estSavings": 3740,
+          "confidence": 0.70,
+          "risk": "LOW",
+          "calculation": "Batch. req=260, limit=3300, savings=3740, risk: 3300/3000=1.10→LOW"
+        }
+      }
+    },
+    {
+      "id": "batch-08",
+      "name": "Batch — long-running consistent (borders steady but spike ratios push to batch)",
+      "category": "batch",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 350, "P99": 600, "Max": 1100},
+        "cpuRequestMillis": 2000,
+        "cpuLimitMillis": 4000,
+        "memUsage": {"P50": 50000000, "P95": 120000000, "P99": 250000000, "Max": 450000000},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "batch",
+        "cpu": {
+          "recommendedReq": 130,
+          "recommendedLimit": 1210,
+          "estSavings": 1870,
+          "confidence": 0.70,
+          "risk": "LOW",
+          "calculation": "Batch. req=130, limit=1210, savings=1870, risk: 1210/1100=1.10→LOW"
+        }
+      }
+    },
+    {
+      "id": "batch-09",
+      "name": "Batch — small workload",
+      "category": "batch",
+      "input": {
+        "cpuUsage": {"P50": 10, "P95": 40, "P99": 80, "Max": 150},
+        "cpuRequestMillis": 500,
+        "cpuLimitMillis": 1000,
+        "memUsage": {"P50": 5000000, "P95": 20000000, "P99": 40000000, "Max": 80000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "idle",
+        "cpu": {
+          "recommendedReq": 48,
+          "recommendedLimit": 100,
+          "estSavings": 452,
+          "confidence": 0.95,
+          "risk": "HIGH",
+          "calculation": "IDLE (P50/req=10/500=0.02<0.05, dw=10080>=2880). req=max(ceil(40*1.20),10)=48, limit=max(ceil(80*1.25),48)=100, savings=500-48=452, conf=0.95, risk: 48/80=0.6<1.0→HIGH"
+        }
+      }
+    },
+    {
+      "id": "batch-10",
+      "name": "Batch — P50/req=0.06 ensuring not idle, with high spikes",
+      "category": "batch",
+      "input": {
+        "cpuUsage": {"P50": 120, "P95": 400, "P99": 700, "Max": 1400},
+        "cpuRequestMillis": 2000,
+        "cpuLimitMillis": 4000,
+        "memUsage": {"P50": 60000000, "P95": 200000000, "P99": 350000000, "Max": 700000000},
+        "memRequestBytes": 2000000000,
+        "memLimitBytes": 4000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "batch",
+        "cpu": {
+          "recommendedReq": 156,
+          "recommendedLimit": 1540,
+          "estSavings": 1844,
+          "confidence": 0.70,
+          "risk": "LOW",
+          "calculation": "Batch. req=156, limit=1540, savings=1844, risk: 1540/1400=1.10→LOW"
+        }
+      }
+    },
+    {
+      "id": "idle-01",
+      "name": "Idle — zero usage for 48h+",
+      "category": "idle",
+      "input": {
+        "cpuUsage": {"P50": 0, "P95": 0, "P99": 0, "Max": 0},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 0, "P95": 0, "P99": 0, "Max": 0},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 5000
+      },
+      "expected": {
+        "pattern": "idle",
+        "cpu": {
+          "recommendedReq": 10,
+          "recommendedLimit": 10,
+          "estSavings": 990,
+          "confidence": 0.86,
+          "risk": "LOW",
+          "calculation": "IDLE. req=10, limit=10, savings=990, conf: dw=5000→3-7d range: 0.85+(680/5760)*0.10=0.862→round→0.86, P99=0→risk LOW"
+        }
+      }
+    },
+    {
+      "id": "idle-02",
+      "name": "Idle — near-zero usage",
+      "category": "idle",
+      "input": {
+        "cpuUsage": {"P50": 2, "P95": 5, "P99": 8, "Max": 10},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 1000000, "P95": 2000000, "P99": 3000000, "Max": 5000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 5000
+      },
+      "expected": {
+        "pattern": "idle",
+        "cpu": {
+          "recommendedReq": 10,
+          "recommendedLimit": 10,
+          "estSavings": 990,
+          "confidence": 0.86,
+          "risk": "LOW",
+          "calculation": "IDLE. req=10, limit=10, savings=990, conf=0.86, risk: 10/8=1.25→LOW"
+        }
+      }
+    },
+    {
+      "id": "idle-03",
+      "name": "Idle — P50/req=0.049 (just below 5%)",
+      "category": "idle",
+      "input": {
+        "cpuUsage": {"P50": 49, "P95": 60, "P99": 70, "Max": 80},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 20000000, "P95": 30000000, "P99": 40000000, "Max": 50000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 3000
+      },
+      "expected": {
+        "pattern": "idle",
+        "cpu": {
+          "recommendedReq": 72,
+          "recommendedLimit": 88,
+          "estSavings": 928,
+          "confidence": 0.41,
+          "risk": "MEDIUM",
+          "calculation": "IDLE. req=72, limit=88, savings=928, conf: dw=3000<4320→0.20+(3000/4320)*0.30=0.41, risk: 72/70=1.029→MEDIUM"
+        }
+      }
+    },
+    {
+      "id": "idle-04",
+      "name": "Idle — long data window (7d+), very confident",
+      "category": "idle",
+      "input": {
+        "cpuUsage": {"P50": 5, "P95": 10, "P99": 15, "Max": 20},
+        "cpuRequestMillis": 500,
+        "cpuLimitMillis": 1000,
+        "memUsage": {"P50": 2000000, "P95": 4000000, "P99": 6000000, "Max": 8000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "idle",
+        "cpu": {
+          "recommendedReq": 12,
+          "recommendedLimit": 19,
+          "estSavings": 488,
+          "confidence": 0.95,
+          "risk": "HIGH",
+          "calculation": "IDLE. req=12, limit=19, savings=488, conf=0.95, risk: 12/15=0.8<1.0→HIGH"
+        }
+      }
+    },
+    {
+      "id": "idle-05",
+      "name": "Idle — insufficient data window (33h < 48h) → falls through to pattern shape",
+      "category": "idle",
+      "input": {
+        "cpuUsage": {"P50": 2, "P95": 5, "P99": 8, "Max": 10},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 1000000, "P95": 2000000, "P99": 3000000, "Max": 5000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 2000
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 10,
+          "recommendedLimit": 10,
+          "estSavings": 990,
+          "confidence": 0.34,
+          "risk": "LOW",
+          "calculation": "Burstable (dw<2880 so not idle). req=10 (floor), limit=10, savings=990, conf=0.34, risk: 10/8=1.25→LOW"
+        }
+      }
+    },
+    {
+      "id": "edge-01",
+      "name": "Edge — single data point (just deployed)",
+      "category": "edge",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 100, "P99": 100, "Max": 100},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 50000000, "P95": 50000000, "P99": 50000000, "Max": 50000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 0.5
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 120,
+          "recommendedLimit": 125,
+          "estSavings": 880,
+          "confidence": 0.20,
+          "risk": "LOW",
+          "calculation": "Steady. req=120, limit=125, savings=880, conf=0.20, risk: 120/100=1.20→LOW"
+        }
+      }
+    },
+    {
+      "id": "edge-02",
+      "name": "Edge — CV exactly at 0.30 boundary",
+      "category": "edge",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 130, "P99": 150, "Max": 170},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 50000000, "P95": 60000000, "P99": 70000000, "Max": 80000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 130,
+          "recommendedLimit": 188,
+          "estSavings": 870,
+          "confidence": 0.80,
+          "risk": "LOW",
+          "calculation": "Burstable (CV=0.30, not <0.30). req=130, limit=188, savings=870, risk: 187.5/150=1.25→LOW"
+        }
+      }
+    },
+    {
+      "id": "edge-03",
+      "name": "Edge — all negative values (should clamp to zero)",
+      "category": "edge",
+      "input": {
+        "cpuUsage": {"P50": -100, "P95": -50, "P99": -30, "Max": -10},
+        "cpuRequestMillis": -500,
+        "cpuLimitMillis": -1000,
+        "memUsage": {"P50": -100, "P95": -50, "P99": -30, "Max": -10},
+        "memRequestBytes": -500,
+        "memLimitBytes": -1000,
+        "dataWindowMinutes": -60
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpuRecommendation": false,
+        "memRecommendation": false,
+        "calculation": "All values clamped to 0 by engine.Analyze. Request=0 → no recommendation. Should not panic."
+      }
+    },
+    {
+      "id": "edge-04",
+      "name": "Edge — BestEffort pod (no requests)",
+      "category": "edge",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 200, "P99": 300, "Max": 400},
+        "cpuRequestMillis": 0,
+        "cpuLimitMillis": 0,
+        "memUsage": {"P50": 100000000, "P95": 200000000, "P99": 300000000, "Max": 400000000},
+        "memRequestBytes": 0,
+        "memLimitBytes": 0,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpuRecommendation": false,
+        "memRecommendation": false,
+        "calculation": "Request clamped to 0 → no recs. Pattern: CV=(200-100)/100=1.0>0.30→burstable (request=0 skips idle check)"
+      }
+    },
+    {
+      "id": "edge-05",
+      "name": "Edge — usage exceeds request (under-provisioned)",
+      "category": "edge",
+      "input": {
+        "cpuUsage": {"P50": 800, "P95": 1200, "P99": 1500, "Max": 2000},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 400000000, "P95": 600000000, "P99": 800000000, "Max": 1000000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpuRecommendation": false,
+        "memRecommendation": false,
+        "calculation": "CPU: CV=(1200-800)/800=0.5>0.30→Burstable. recReq=ceil(800*1.30)=1040>1000→savings negative→no rec. Mem: recReq=ceil(800M*1.25)=1000M→savings=500M-1000M<0→no rec."
+      }
+    },
+    {
+      "id": "edge-06",
+      "name": "Edge — zero P50 with P95 (high CV edge case)",
+      "category": "edge",
+      "input": {
+        "cpuUsage": {"P50": 0, "P95": 100, "P99": 200, "Max": 300},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 0, "P95": 50000000, "P99": 100000000, "Max": 150000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 5000
+      },
+      "expected": {
+        "pattern": "idle",
+        "cpu": {
+          "recommendedReq": 120,
+          "recommendedLimit": 250,
+          "estSavings": 880,
+          "confidence": 0.86,
+          "risk": "HIGH",
+          "calculation": "IDLE. req=120, limit=250, savings=880, conf=0.86, risk: 120/200=0.6<1.0→HIGH"
+        }
+      }
+    },
+    {
+      "id": "edge-07",
+      "name": "Edge — CrashLoopBackOff erratic metrics",
+      "category": "edge",
+      "input": {
+        "cpuUsage": {"P50": 10, "P95": 500, "P99": 900, "Max": 1000},
+        "cpuRequestMillis": 500,
+        "cpuLimitMillis": 1000,
+        "memUsage": {"P50": 5000000, "P95": 200000000, "P99": 400000000, "Max": 500000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 60
+      },
+      "expected": {
+        "pattern": "batch",
+        "cpu": {
+          "recommendedReq": 13,
+          "recommendedLimit": 1100,
+          "estSavings": 487,
+          "confidence": 0.20,
+          "risk": "LOW",
+          "calculation": "BATCH (dw=60<2880 so not idle; P99/P50=90>=5, Max/P50=100>=10). req=ceil(10*1.30)=13, limit=ceil(1000*1.10)=1100, savings=500-13=487, conf=0.20+(60/4320)*0.30=0.204→round→0.20, min(0.20,0.70)=0.20, risk: 1100/1000=1.10→LOW"
+        }
+      }
+    },
+    {
+      "id": "edge-08",
+      "name": "Edge — very small values (near CPU floor)",
+      "category": "edge",
+      "input": {
+        "cpuUsage": {"P50": 1, "P95": 2, "P99": 3, "Max": 5},
+        "cpuRequestMillis": 100,
+        "cpuLimitMillis": 200,
+        "memUsage": {"P50": 500000, "P95": 1000000, "P99": 2000000, "Max": 3000000},
+        "memRequestBytes": 50000000,
+        "memLimitBytes": 100000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "idle",
+        "cpu": {
+          "recommendedReq": 10,
+          "recommendedLimit": 10,
+          "estSavings": 90,
+          "confidence": 0.95,
+          "risk": "LOW",
+          "calculation": "IDLE. req=10, limit=10, savings=90, conf=0.95, risk: 10/3=3.33→LOW"
+        }
+      }
+    },
+    {
+      "id": "edge-09",
+      "name": "Edge — memory floor test",
+      "category": "edge",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 120, "P99": 140, "Max": 160},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 100, "P95": 200, "P99": 300, "Max": 500},
+        "memRequestBytes": 1000000000,
+        "memLimitBytes": 2000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "memory": {
+          "recommendedReq": 4194304,
+          "recommendedLimit": 4194304,
+          "estSavings": 995805696,
+          "confidence": 0.90,
+          "risk": "LOW",
+          "calculation": "mem floor applied. req=4194304, limit=4194304, savings=995805696, memRisk: 4194304/500=8388→LOW"
+        }
+      }
+    },
+    {
+      "id": "edge-10",
+      "name": "Edge — data window exactly at 7d boundary",
+      "category": "edge",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 120, "P99": 140, "Max": 160},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 50000000, "P95": 60000000, "P99": 70000000, "Max": 80000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 144,
+          "recommendedLimit": 175,
+          "estSavings": 856,
+          "confidence": 0.95,
+          "risk": "MEDIUM",
+          "calculation": "Same as steady-01. dw=10080≥10080(7d)→conf=0.95. risk: 144/140=1.029→MEDIUM"
+        }
+      }
+    },
+    {
+      "id": "edge-11",
+      "name": "Edge — zero data window",
+      "category": "edge",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 120, "P99": 140, "Max": 160},
+        "cpuRequestMillis": 1000,
+        "cpuLimitMillis": 2000,
+        "memUsage": {"P50": 50000000, "P95": 60000000, "P99": 70000000, "Max": 80000000},
+        "memRequestBytes": 500000000,
+        "memLimitBytes": 1000000000,
+        "dataWindowMinutes": 0
+      },
+      "expected": {
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 144,
+          "recommendedLimit": 175,
+          "estSavings": 856,
+          "confidence": 0.20,
+          "risk": "MEDIUM",
+          "calculation": "dw=0→conf=0.20. risk: 144/140=1.029→MEDIUM"
+        }
+      }
+    },
+    {
+      "id": "edge-12",
+      "name": "Edge — negative request (should produce no recommendation)",
+      "category": "edge",
+      "input": {
+        "cpuUsage": {"P50": 100, "P95": 200, "P99": 250, "Max": 300},
+        "cpuRequestMillis": -100,
+        "cpuLimitMillis": 0,
+        "memUsage": {"P50": 100000000, "P95": 200000000, "P99": 300000000, "Max": 400000000},
+        "memRequestBytes": -100,
+        "memLimitBytes": 0,
+        "dataWindowMinutes": 10080
+      },
+      "expected": {
+        "pattern": "burstable",
+        "cpuRecommendation": false,
+        "memRecommendation": false,
+        "calculation": "Negative request clamped to 0 → no recs. Pattern: CV=(200-100)/100=1.0>0.30→burstable"
+      }
+    }
+  ]
+}

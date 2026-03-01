@@ -1,4 +1,4 @@
-.PHONY: build test lint clean docker-build dev-cluster dev-deploy test-integration
+.PHONY: build test lint clean docker-build dev-cluster dev-deploy test-integration backtest
 
 BINARY_DIR := bin
 
@@ -26,6 +26,9 @@ dev-cluster:
 
 dev-deploy:
 	helm upgrade --install k8s-sage deploy/helm/k8s-sage
+
+backtest:
+	go test ./test/backtest/... -v -count=1
 
 test-integration:
 	go test ./test/integration/... -v -tags=integration
