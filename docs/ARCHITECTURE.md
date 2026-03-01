@@ -43,14 +43,15 @@ These are hard constraints. Any code change that risks exceeding them must be fl
 
 #### What It Collects
 
-The agent scrapes the kubelet Summary API (`/stats/summary`) at a configurable interval (default 30s) and enriches it with pod spec data from the Kubernetes API.
+The agent scrapes the kubelet Summary API (`/stats/summary`) at a configurable interval (default 30s) for usage metrics, and the kubelet `/pods` endpoint for pod spec data (resource requests, limits, QoS class, restart counts).
 
 Per container, per scrape:
-- CPU usage (nanocores) vs CPU request vs CPU limit
-- Memory usage (bytes) vs memory request vs memory limit
-- Memory working set (bytes) — more accurate than RSS for K8s decisions
-- Restart count
-- Pod QoS class (Guaranteed, Burstable, BestEffort)
+- CPU usage (nanocores) — from `/stats/summary`
+- Memory usage (bytes) and working set (bytes) — from `/stats/summary`
+- CPU request, CPU limit — from `/pods` pod spec
+- Memory request, memory limit — from `/pods` pod spec
+- Restart count — from `/pods` container status
+- Pod QoS class (Guaranteed, Burstable, BestEffort) — from `/pods` pod status
 
 #### In-Memory Store
 
@@ -68,8 +69,8 @@ For dense nodes (>300 pods), reduce retention or increase memory limit via Helm 
 
 #### Outputs
 
-- **Pull**: `/report` endpoint returns JSON waste analysis per pod on this node
-- **Push**: Posts aggregated reports to sage-server every 5 minutes
+- **Pull**: `/report` endpoint (port 9101) returns JSON waste analysis per pod on this node
+- **Push**: The Pusher component (`internal/agent/pusher.go`) POSTs aggregated `NodeReport` JSON to the server's `POST /api/v1/ingest` endpoint every push interval (default 5 minutes, configurable via `PUSH_INTERVAL` env var). The server URL is set via `SERVER_URL` env var (default `http://k8s-sage-server:8080`).
 - **Prometheus**: `/metrics` endpoint exposes standard Prometheus metrics for integration with existing monitoring
 
 #### RBAC
@@ -80,12 +81,15 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "nodes"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes/stats", "nodes/proxy"]
+    verbs: ["get"]
   - apiGroups: ["metrics.k8s.io"]
     resources: ["pods", "nodes"]
     verbs: ["get", "list"]
 ```
 
-No write access. No secrets access. Principle of least privilege.
+The `nodes/stats` and `nodes/proxy` resources are required for the agent to access the kubelet `/stats/summary` and `/pods` endpoints via the API server proxy. No write access. No secrets access. Principle of least privilege.
 
 ---
 
@@ -147,8 +151,8 @@ The rules engine classifies each workload into one of four patterns based on CPU
 | Pattern | Characteristics | Right-sizing Strategy |
 |---------|----------------|----------------------|
 | **Steady** | Low variance, consistent usage | Set request to P95 + 20% headroom |
-| **Burstable** | Periodic spikes, low baseline | Set request to P50, limit to P99 + buffer |
-| **Batch** | High usage during execution, idle otherwise | Optimise for job duration, allow burst |
+| **Burstable** | Periodic spikes, low baseline | Set request to P50 + 20%, limit to P99 + 20% |
+| **Batch** | High usage during execution, idle otherwise | Set request to P50 + 20%, limit to Max + 20% |
 | **Idle** | <5% utilisation sustained over 48h+ | Flag for removal or investigation |
 
 Classification algorithm:

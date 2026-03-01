@@ -29,7 +29,7 @@ Kubernetes resource efficiency platform. Lightweight in-cluster agents identify 
 
 ## What It Does
 
-- **Agents** (DaemonSet, 50Mi/50m per node) scrape the kubelet Summary API every 30s, compute waste per container (`request - P95 usage`), and push reports to the server.
+- **Agents** (DaemonSet, 50Mi/50m per node) scrape the kubelet Summary API (`/stats/summary`) every 30s for usage metrics, enrich with resource requests/limits from the kubelet `/pods` endpoint, compute waste per container (`request - P95 usage`), and push `NodeReport` JSON to the server every 5 minutes.
 - **Server** aggregates reports cluster-wide, groups by owner (Deployment, StatefulSet, etc.), and runs a deterministic rules engine that classifies workloads (steady, burstable, batch, idle) and generates right-sizing recommendations with confidence scores and risk levels.
 - **CLI** queries the server API and displays reports and recommendations as tables or JSON.
 
@@ -131,6 +131,7 @@ Key configuration options:
 |-------|---------|-------------|
 | `agent.resources.requests.cpu` | `50m` | Agent CPU request (hard constraint) |
 | `agent.resources.requests.memory` | `50Mi` | Agent memory request (hard constraint) |
+| `agent.pushInterval` | `5m` | How often agents push reports to the server |
 | `server.replicas` | `1` | Server replica count |
 | `server.resources.requests.memory` | `256Mi` | Server memory request |
 | `server.service.type` | `ClusterIP` | Server service type |
@@ -144,8 +145,8 @@ The rules engine classifies each workload into one of four patterns:
 | Pattern | Trigger | Strategy |
 |---------|---------|----------|
 | **Steady** | Low variance (CV < 0.3) | Request = P95 + 20% headroom |
-| **Burstable** | Periodic spikes | Request = P50 + 30%, Limit = P99 + 25% |
-| **Batch** | Extreme spike ratios | Request = P50 + 30%, Limit = Max + 10% |
+| **Burstable** | Periodic spikes | Request = P50 + 20%, Limit = P99 + 20% |
+| **Batch** | Extreme spike ratios | Request = P50 + 20%, Limit = Max + 20% |
 | **Idle** | < 5% utilisation for 48h+ | Flag for investigation |
 
 Confidence scoring accounts for data window duration (7+ days = high confidence) and pattern stability. Risk levels reflect how close recommendations are to observed peaks (P99 for CPU, Max for memory).
@@ -159,7 +160,7 @@ Safety invariants enforced:
 
 - **No persistent storage**: Agent and server are in-memory only. Restarting loses historical data. Agents rebuild from the kubelet within 30s; server rebuilds as agents push.
 - **No SLM yet**: The fine-tuned small language model is Phase 2. Current recommendations come from the deterministic rules engine only.
-- **No push from agent to server**: Agents currently expose `/report` for pull. Push-based reporting to the server is not yet implemented — the server aggregates what it receives via the ingest API.
+- **Agent push resets on restart**: The agent pushes reports to the server every 5 minutes. However, the agent's in-memory store is lost on pod restart, so data windows reset. Agents rebuild data from the kubelet within 30s of restart; classification confidence recovers as the data window grows.
 - **No authentication**: The API has no auth. Deploy behind a network policy or service mesh in production.
 - **Single-server**: No HA for the server. A single replica is sufficient for clusters up to 10k pods.
 - **Owner detection**: Relies on `ownerReference` in pod waste reports. Standalone pods (no owner) are treated as their own owner.
@@ -173,7 +174,7 @@ k8s-sage/
 │   ├── server/         # Server entrypoint (port 8080)
 │   └── cli/            # CLI (cobra)
 ├── internal/
-│   ├── agent/          # Collector, store, reporter
+│   ├── agent/          # Collector, store, reporter, pusher
 │   ├── server/         # Aggregator, API handlers
 │   ├── rules/          # Classification + recommendation engine
 │   ├── models/         # Shared types
