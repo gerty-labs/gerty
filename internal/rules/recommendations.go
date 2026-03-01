@@ -49,12 +49,12 @@ const (
 	riskHighP99Proximity = 1.0
 
 	// minRecommendedCPUMillis is the floor for CPU recommendations.
-	// Never recommend less than 10m CPU.
-	minRecommendedCPUMillis = 10
+	// Never recommend less than 50m CPU.
+	minRecommendedCPUMillis = 50
 
 	// minRecommendedMemBytes is the floor for memory recommendations.
-	// Never recommend less than 4 MiB.
-	minRecommendedMemBytes = 4 * 1024 * 1024
+	// Never recommend less than 64 MiB.
+	minRecommendedMemBytes = 64 * 1024 * 1024
 
 	// dataWindow3Days in minutes.
 	dataWindow3Days = 3 * 24 * 60
@@ -124,8 +124,12 @@ func GenerateCPURecommendation(
 	}
 
 	// Enforce floors.
+	floorApplied := recReq < float64(minRecommendedCPUMillis)
 	recReq = math.Max(recReq, float64(minRecommendedCPUMillis))
 	recLimit = math.Max(recLimit, recReq)
+	if floorApplied {
+		reasoning += fmt.Sprintf(" (minimum floor of %dm applied — usage below threshold)", minRecommendedCPUMillis)
+	}
 
 	// Check if the recommendation actually reduces waste meaningfully.
 	savings := float64(currentReqMillis) - recReq
@@ -219,8 +223,12 @@ func GenerateMemoryRecommendation(
 			recReq/1048576, (headroomBurstableLimit-1)*100)
 	}
 
+	floorApplied := recReq < float64(minRecommendedMemBytes)
 	recReq = math.Max(recReq, float64(minRecommendedMemBytes))
 	recLimit = math.Max(recLimit, recReq)
+	if floorApplied {
+		reasoning += fmt.Sprintf(" (minimum floor of %.0fMi applied — usage below threshold)", float64(minRecommendedMemBytes)/1048576)
+	}
 
 	savings := float64(currentReqBytes) - recReq
 	if savings <= 0 {

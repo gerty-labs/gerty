@@ -131,10 +131,10 @@ func TestGenerateCPURecommendation_BatchWorkload(t *testing.T) {
 func TestGenerateCPURecommendation_IdleWorkload(t *testing.T) {
 	// P50=2, P95=5, P99=8, Max=10
 	// P50/req = 2/1000 = 0.002 < 0.05, dataWindow=5000 > 2880 -> Idle.
-	// RecReq = max(P95 * 1.20, 10) = max(6, 10) = 10
-	// RecLimit = max(P99 * 1.20, recReq) = max(9.6, 10) = 10
-	// Savings = 1000 - 10 = 990
-	// Risk: recReq/P99 = 10/8 = 1.25 > 1.10 -> LOW
+	// RecReq = max(P95 * 1.20, 50) = max(6, 50) = 50
+	// RecLimit = max(P99 * 1.20, recReq) = max(9.6, 50) = 50
+	// Savings = 1000 - 50 = 950
+	// Risk: recReq/P99 = 50/8 = 6.25 > 1.10 -> LOW
 	// Confidence: idle, 5000 min (3-7d range),
 	//   ratio = (5000-4320)/(10080-4320) = 680/5760 ~ 0.118,
 	//   base = 0.85 + 0.118*0.10 = 0.8618, cap 0.95, round -> 0.86
@@ -146,7 +146,7 @@ func TestGenerateCPURecommendation_IdleWorkload(t *testing.T) {
 	assert.Equal(t, models.PatternIdle, rec.Pattern)
 	assert.Equal(t, int64(minRecommendedCPUMillis), rec.RecommendedReq)
 	assert.Equal(t, int64(minRecommendedCPUMillis), rec.RecommendedLimit)
-	assert.Equal(t, int64(990), rec.EstSavings)
+	assert.Equal(t, int64(950), rec.EstSavings)
 	assert.Equal(t, models.RiskLow, rec.Risk)
 	assert.InDelta(t, 0.86, rec.Confidence, 0.01)
 	assert.Contains(t, rec.Reasoning, "idle")
@@ -186,25 +186,29 @@ func TestGenerateCPURecommendation_AlreadyRightSized(t *testing.T) {
 }
 
 func TestGenerateCPURecommendation_MinimumFloor(t *testing.T) {
-	// Very low usage -- should not recommend below 10m CPU.
-	// P50=1, req=1000, window=10080: idle check fires first (P50/req=0.001 < 0.05, window >= 48h).
-	// Idle: RecReq = max(P95 * 1.20, 10) = max(2.4, 10) = 10
-	// RecLimit = max(P99 * 1.20, 10) = max(3.6, 10) = 10
-	// Savings = 1000 - 10 = 990
-	usage := models.MetricAggregate{P50: 1, P95: 2, P99: 3, Max: 5}
+	// Steady workload with very low usage that triggers the general floor.
+	// P50=30, P95=35 -> CV = (35-30)/30 = 0.167 < 0.3 -> Steady.
+	// P50=30 >= lowUsageP50Floor=25, so near-zero guard doesn't fire.
+	// P50/req = 30/1000 = 0.03 < 0.05 but dataWindow=1000 < 2880 -> not idle.
+	// Steady: RecReq = P95 * 1.20 = 35 * 1.20 = 42, floor to 50.
+	// RecLimit = max(P99 * 1.20, 50) = max(48, 50) = 50.
+	// Savings = 1000 - 50 = 950.
+	usage := models.MetricAggregate{P50: 30, P95: 35, P99: 40, Max: 45}
 
-	rec := GenerateCPURecommendation(testOwner, "main", usage, 1000, 2000, 10080)
+	rec := GenerateCPURecommendation(testOwner, "main", usage, 1000, 2000, 1000)
 	require.NotNil(t, rec)
 
 	assert.Equal(t, int64(minRecommendedCPUMillis), rec.RecommendedReq)
 	assert.Equal(t, int64(minRecommendedCPUMillis), rec.RecommendedLimit)
-	assert.Equal(t, int64(990), rec.EstSavings)
-	assert.Equal(t, models.PatternIdle, rec.Pattern)
+	assert.Equal(t, int64(950), rec.EstSavings)
+	assert.Equal(t, models.PatternSteady, rec.Pattern)
+	assert.Contains(t, rec.Reasoning, "minimum floor")
 	assertSafetyInvariant_CPU(t, rec, usage)
 }
 
 func TestGenerateCPURecommendation_ZeroUsage_WithEnoughData(t *testing.T) {
 	// Zero usage with request=1000 and 83h data window (> 48h) -> Idle.
+	// RecReq = max(0, 50) = 50. Savings = 1000 - 50 = 950.
 	usage := models.MetricAggregate{P50: 0, P95: 0, P99: 0, Max: 0}
 
 	rec := GenerateCPURecommendation(testOwner, "main", usage, 1000, 2000, 5000)
@@ -212,12 +216,13 @@ func TestGenerateCPURecommendation_ZeroUsage_WithEnoughData(t *testing.T) {
 
 	assert.Equal(t, int64(minRecommendedCPUMillis), rec.RecommendedReq)
 	assert.Equal(t, models.PatternIdle, rec.Pattern)
-	assert.Equal(t, int64(990), rec.EstSavings)
+	assert.Equal(t, int64(950), rec.EstSavings)
 	assertSafetyInvariant_CPU(t, rec, usage)
 }
 
 func TestGenerateCPURecommendation_ZeroUsage_ShortWindow(t *testing.T) {
 	// Zero usage but only 1h data -> not enough for idle, defaults to Steady.
+	// RecReq = max(0, 50) = 50. Savings = 1000 - 50 = 950.
 	usage := models.MetricAggregate{P50: 0, P95: 0, P99: 0, Max: 0}
 
 	rec := GenerateCPURecommendation(testOwner, "main", usage, 1000, 2000, 60)
@@ -225,7 +230,7 @@ func TestGenerateCPURecommendation_ZeroUsage_ShortWindow(t *testing.T) {
 
 	assert.Equal(t, int64(minRecommendedCPUMillis), rec.RecommendedReq)
 	assert.Equal(t, models.PatternSteady, rec.Pattern)
-	assert.Equal(t, int64(990), rec.EstSavings)
+	assert.Equal(t, int64(950), rec.EstSavings)
 	assertSafetyInvariant_CPU(t, rec, usage)
 }
 
@@ -271,8 +276,8 @@ func TestGenerateMemoryRecommendation_ZeroRequest(t *testing.T) {
 
 func TestGenerateMemoryRecommendation_MinimumFloor(t *testing.T) {
 	// Steady: RecReq = P99 * 1.20 = 300 * 1.20 = 360
-	// Floor = 4 * 1024 * 1024 = 4_194_304
-	// max(360, 4_194_304) = 4_194_304
+	// Floor = 64 * 1024 * 1024 = 67_108_864
+	// max(360, 67_108_864) = 67_108_864
 	memUsage := models.MetricAggregate{P50: 100, P95: 200, P99: 300, Max: 500}
 
 	rec := GenerateMemoryRecommendation(
@@ -282,6 +287,7 @@ func TestGenerateMemoryRecommendation_MinimumFloor(t *testing.T) {
 	)
 	require.NotNil(t, rec)
 	assert.Equal(t, int64(minRecommendedMemBytes), rec.RecommendedReq)
+	assert.Contains(t, rec.Reasoning, "minimum floor")
 	assertSafetyInvariant_Memory(t, rec, memUsage)
 }
 
