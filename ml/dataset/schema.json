@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "k8s-sage Training Pair",
+  "description": "Schema for instruction-tuning JSONL pairs used to fine-tune the k8s-sage SLM.",
+  "type": "object",
+  "required": ["id", "source", "system", "user", "assistant", "metadata"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "Unique identifier: {source}-{category}-{sequence}"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["k8s-docs", "github", "stackoverflow", "vpa-source", "expert", "synthetic"],
+      "description": "Origin of this training pair"
+    },
+    "system": {
+      "type": "string",
+      "minLength": 20,
+      "description": "System prompt for the model"
+    },
+    "user": {
+      "type": "string",
+      "minLength": 10,
+      "description": "User message containing metrics context and/or question"
+    },
+    "assistant": {
+      "type": "string",
+      "minLength": 50,
+      "description": "Model response with analysis and recommendations"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["category", "provenance"],
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": ["right-sizing", "classification", "runtime-specific", "edge-case"],
+          "description": "What type of knowledge this pair teaches"
+        },
+        "runtime": {
+          "type": "string",
+          "enum": ["jvm", "go", "python", "node", "generic"],
+          "description": "Runtime-specific if applicable"
+        },
+        "pattern": {
+          "type": "string",
+          "enum": ["steady", "burstable", "batch", "idle"],
+          "description": "Workload pattern if applicable"
+        },
+        "provenance": {
+          "type": "string",
+          "minLength": 5,
+          "description": "URL or description of source material"
+        },
+        "needs_review": {
+          "type": "boolean",
+          "description": "True if automated extraction confidence is low"
+        }
+      }
+    }
+  }
+}
