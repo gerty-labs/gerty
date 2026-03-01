@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memory-leak
+  labels:
+    app: memory-leak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: memory-leak
+  template:
+    metadata:
+      labels:
+        app: memory-leak
+    spec:
+      containers:
+        - name: leaker
+          image: busybox:1.36
+          command: ["sh", "-c", "while true; do head -c 1M /dev/urandom >> /tmp/leak; sleep 30; done"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 200m
+              memory: 512Mi

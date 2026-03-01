@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cronjob-batch
+  labels:
+    app: cronjob-batch
+spec:
+  schedule: "*/5 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: cronjob-batch
+        spec:
+          containers:
+            - name: batch
+              image: polinux/stress-ng
+              command: ["stress-ng", "--cpu", "2", "--timeout", "30s"]
+              resources:
+                requests:
+                  cpu: "2"
+                  memory: 1Gi
+                limits:
+                  cpu: "4"
+                  memory: 2Gi
+          restartPolicy: OnFailure

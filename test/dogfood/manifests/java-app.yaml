@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-app
+  labels:
+    app: java-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: java-app
+  template:
+    metadata:
+      labels:
+        app: java-app
+    spec:
+      containers:
+        - name: java
+          image: eclipse-temurin:21-jdk-alpine
+          command:
+            - sh
+            - -c
+            - |
+              cat > /tmp/MemLoad.java << 'JAVA'
+              import java.util.ArrayList;
+              import java.util.List;
+              public class MemLoad {
+                  public static void main(String[] args) throws Exception {
+                      List<byte[]> hold = new ArrayList<>();
+                      for (int i = 0; i < 10; i++) {
+                          hold.add(new byte[1024 * 1024]);
+                      }
+                      while (true) {
+                          byte[] tmp = new byte[1024 * 1024];
+                          Thread.sleep(5000);
+                          tmp = null;
+                      }
+                  }
+              }
+              JAVA
+              cd /tmp && javac MemLoad.java && java -Xmx768m -Xms256m -XX:+UseG1GC MemLoad
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
