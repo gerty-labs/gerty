@@ -9,7 +9,8 @@ PASS=0
 FAIL=0
 
 # Port-forward to sage-server.
-kubectl port-forward -n "${NS}" svc/k8s-sage-server 8080:8080 &
+SERVER_NS="${SERVER_NS:-default}"
+kubectl port-forward -n "${SERVER_NS}" svc/k8s-sage-server 8080:8080 &
 PF_PID=$!
 trap "kill ${PF_PID} 2>/dev/null || true" EXIT
 sleep 2

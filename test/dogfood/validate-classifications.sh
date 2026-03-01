@@ -3,12 +3,12 @@
 # Requires: jq, kubectl
 set -euo pipefail
 
-NS="sage-dogfood"
 PASS=0
 FAIL=0
 
 # Port-forward to sage-server.
-kubectl port-forward -n "${NS}" svc/k8s-sage-server 8080:8080 &
+SERVER_NS="${SERVER_NS:-default}"
+kubectl port-forward -n "${SERVER_NS}" svc/k8s-sage-server 8080:8080 &
 PF_PID=$!
 trap "kill ${PF_PID} 2>/dev/null || true" EXIT
 sleep 2
@@ -16,31 +16,30 @@ sleep 2
 echo "Fetching recommendations..."
 RECS=$(curl -s http://localhost:8080/api/v1/recommendations)
 
-# Expected workload → pattern mapping.
-declare -A EXPECTED=(
-  ["nginx-overprovisioned"]="steady"
-  ["api-bursty"]="burstable"
-  ["cronjob-batch"]="batch"
-  ["idle-dev"]="idle"
-)
-
-for WORKLOAD in "${!EXPECTED[@]}"; do
-  WANT="${EXPECTED[$WORKLOAD]}"
-  # Extract pattern for this workload from recommendations.
-  GOT=$(echo "${RECS}" | jq -r --arg name "${WORKLOAD}" \
+# Check each expected workload/pattern pair.
+check_pattern() {
+  local workload="$1"
+  local want="$2"
+  local got
+  got=$(echo "${RECS}" | jq -r --arg name "${workload}" \
     '.data[] | select(.target.name == $name) | .pattern' | head -1)
 
-  if [ -z "${GOT}" ] || [ "${GOT}" = "null" ]; then
-    echo "FAIL: ${WORKLOAD} — no recommendation found"
+  if [ -z "${got}" ] || [ "${got}" = "null" ]; then
+    echo "FAIL: ${workload} — no recommendation found"
     FAIL=$((FAIL + 1))
-  elif [ "${GOT}" = "${WANT}" ]; then
-    echo "PASS: ${WORKLOAD} — pattern=${GOT}"
+  elif [ "${got}" = "${want}" ]; then
+    echo "PASS: ${workload} — pattern=${got}"
     PASS=$((PASS + 1))
   else
-    echo "FAIL: ${WORKLOAD} — expected=${WANT}, got=${GOT}"
+    echo "FAIL: ${workload} — expected=${want}, got=${got}"
     FAIL=$((FAIL + 1))
   fi
-done
+}
+
+check_pattern "nginx-overprovisioned" "steady"
+check_pattern "api-bursty" "burstable"
+check_pattern "cronjob-batch" "batch"
+check_pattern "idle-dev" "idle"
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
