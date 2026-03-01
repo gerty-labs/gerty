@@ -14,16 +14,16 @@ const (
 	headroomSteady = 1.20
 
 	// headroomBurstableReq is the headroom for burstable workload requests.
-	// Request = P50 * 1.30 (30% headroom above baseline).
-	headroomBurstableReq = 1.30
+	// Request = P50 * 1.20 (20% headroom above baseline, consistent with steady).
+	headroomBurstableReq = 1.20
 
 	// headroomBurstableLimit is the headroom for burstable workload limits.
-	// Limit = P99 * 1.25 (25% headroom above peak).
-	headroomBurstableLimit = 1.25
+	// Limit = P99 * 1.20 (20% headroom above peak).
+	headroomBurstableLimit = 1.20
 
 	// headroomBatchLimit is the headroom for batch workload limits.
-	// Limit = Max * 1.10 (10% headroom — batch jobs need their full burst).
-	headroomBatchLimit = 1.10
+	// Limit = Max * 1.20 (20% headroom — consistent across all patterns).
+	headroomBatchLimit = 1.20
 
 	// confidenceMaxSteady7d is the maximum confidence for steady patterns with 7+ days data.
 	confidenceMaxSteady7d = 0.95

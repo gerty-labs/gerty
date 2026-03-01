@@ -143,10 +143,10 @@ func TestSafety_NeverRecommendZero(t *testing.T) {
 	}
 }
 
-// Rule 4: Headroom must scale with risk — burstable/batch get more headroom than steady.
-// For steady: req uses P95 * 1.20. For burstable: req uses P50 * 1.30 (lower req),
-// but limit uses P99 * 1.25 (higher coverage). We verify that burstable/batch limits
-// are at least as generous as steady limits relative to P99.
+// Rule 4: Headroom must scale with risk — all patterns use 1.20 headroom.
+// For steady: req uses P95 * 1.20. For burstable: req uses P50 * 1.20 (lower req),
+// limit uses P99 * 1.20. For batch: limit uses Max * 1.20. We verify that limits
+// provide at least 20% headroom over the relevant peak metric.
 func TestSafety_HeadroomScalesWithPattern(t *testing.T) {
 	for _, sc := range loadScenarios(t) {
 		t.Run(sc.ID, func(t *testing.T) {
@@ -164,28 +164,28 @@ func TestSafety_HeadroomScalesWithPattern(t *testing.T) {
 
 			switch result.Pattern {
 			case models.PatternSteady:
-				// Steady: limit should be >= P99 * 1.25 (headroomBurstableLimit)
-				if limitHeadroomOverP99 < 1.24 { // allow tiny IEEE754 slack
-					t.Errorf("steady limit headroom over P99 is %.2f, want >= 1.25", limitHeadroomOverP99)
+				// Steady: limit should be >= P99 * 1.20 (headroomBurstableLimit)
+				if limitHeadroomOverP99 < 1.19 { // allow tiny IEEE754 slack
+					t.Errorf("steady limit headroom over P99 is %.2f, want >= 1.20", limitHeadroomOverP99)
 				}
 			case models.PatternBurstable:
-				// Burstable limit should also be >= P99 * 1.25
-				if limitHeadroomOverP99 < 1.24 {
-					t.Errorf("burstable limit headroom over P99 is %.2f, want >= 1.25", limitHeadroomOverP99)
+				// Burstable limit should also be >= P99 * 1.20
+				if limitHeadroomOverP99 < 1.19 {
+					t.Errorf("burstable limit headroom over P99 is %.2f, want >= 1.20", limitHeadroomOverP99)
 				}
 			case models.PatternBatch:
-				// Batch limit should be >= Max * 1.10
+				// Batch limit should be >= Max * 1.20
 				max := sc.Input.CPUUsage.Max
 				if max > 0 {
 					limitHeadroomOverMax := float64(rec.RecommendedLimit) / max
-					if limitHeadroomOverMax < 1.09 { // allow tiny slack
-						t.Errorf("batch limit headroom over Max is %.2f, want >= 1.10", limitHeadroomOverMax)
+					if limitHeadroomOverMax < 1.19 { // allow tiny slack
+						t.Errorf("batch limit headroom over Max is %.2f, want >= 1.20", limitHeadroomOverMax)
 					}
 				}
 			case models.PatternIdle:
-				// Idle: limit should be >= P99 * 1.25 or the floor
+				// Idle: limit should be >= P99 * 1.20 or the floor
 				minFloor := float64(10) // minRecommendedCPUMillis
-				if float64(rec.RecommendedLimit) < math.Max(p99*1.24, minFloor) {
+				if float64(rec.RecommendedLimit) < math.Max(p99*1.19, minFloor) {
 					// This is OK if the floor kicks in
 					if float64(rec.RecommendedLimit) < minFloor {
 						t.Errorf("idle limit %d is below floor %d", rec.RecommendedLimit, 10)
