@@ -132,6 +132,7 @@ class GitHubClient:
         self.token = token
         self._request_count = 0
         self._rate_limit_remaining = 5000 if token else 60
+        self._search_rate_remaining = 30 if token else 10
         # Create SSL context for HTTPS
         self._ssl_ctx = ssl.create_default_context()
 
@@ -141,10 +142,13 @@ class GitHubClient:
             "User-Agent": "k8s-sage-data-collector/0.1",
         }
         if self.token:
+            # Support both classic (ghp_) and fine-grained (github_pat_) tokens.
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
-    def _request(self, url: str, params: Optional[dict] = None) -> Optional[dict]:
+    def _request(
+        self, url: str, params: Optional[dict] = None, _retry: int = 0
+    ) -> Optional[dict]:
         """Make an authenticated GET request with rate limiting."""
         if params:
             url = f"{url}?{urllib.parse.urlencode(params)}"
@@ -152,18 +156,28 @@ class GitHubClient:
         req = urllib.request.Request(url, headers=self._headers())
         self._request_count += 1
 
+        is_search = "/search/" in url
+
         try:
             with urllib.request.urlopen(req, context=self._ssl_ctx, timeout=30) as resp:
-                # Update rate limit tracking.
-                self._rate_limit_remaining = int(
-                    resp.headers.get("X-RateLimit-Remaining", self._rate_limit_remaining)
+                # Update rate limit tracking (search and core APIs have separate limits).
+                remaining = int(
+                    resp.headers.get("X-RateLimit-Remaining", 999)
                 )
-                if self._rate_limit_remaining < 50:
+                if is_search:
+                    self._search_rate_remaining = remaining
+                    threshold = 5  # Search API: 30/min, sleep only when very low
+                else:
+                    self._rate_limit_remaining = remaining
+                    threshold = 100  # Core API: 5000/hr, sleep earlier
+
+                if remaining < threshold:
                     reset_time = int(resp.headers.get("X-RateLimit-Reset", 0))
-                    wait = max(reset_time - time.time(), 0) + 2
+                    wait = min(max(reset_time - time.time(), 0) + 2, 120)
                     logger.warning(
-                        "Rate limit low (%d remaining), sleeping %.0f seconds",
-                        self._rate_limit_remaining,
+                        "Rate limit low (%d remaining, %s), sleeping %.0f seconds",
+                        remaining,
+                        "search" if is_search else "core",
                         wait,
                     )
                     time.sleep(wait)
@@ -171,13 +185,16 @@ class GitHubClient:
                 return json.loads(resp.read().decode("utf-8"))
 
         except urllib.error.HTTPError as e:
-            if e.code == 403:
-                # Rate limited — wait and retry once.
+            if e.code == 403 and _retry < 2:
+                # Rate limited — wait and retry (max 2 retries).
                 reset_time = int(e.headers.get("X-RateLimit-Reset", 0))
-                wait = max(reset_time - time.time(), 0) + 5
-                logger.warning("Rate limited (403). Sleeping %.0f seconds", wait)
+                wait = min(max(reset_time - time.time(), 0) + 5, 120)
+                logger.warning(
+                    "Rate limited (403, retry %d). Sleeping %.0f seconds",
+                    _retry + 1, wait,
+                )
                 time.sleep(wait)
-                return self._request(url)  # Retry once.
+                return self._request(url, _retry=_retry + 1)
             elif e.code == 422:
                 logger.debug("Unprocessable query (422) for %s", url)
                 return None
@@ -440,14 +457,15 @@ def collect_all(output_path: Path, verbose: bool = False) -> None:
     all_pairs: list[TrainingPair] = []
     seen_issue_ids: set[str] = set()  # Deduplicate across queries.
 
-    for repo in TARGET_REPOS:
-        logger.info("=== Searching %s ===", repo)
+    for repo_idx, repo in enumerate(TARGET_REPOS):
+        print(f"\n=== [{repo_idx+1}/{len(TARGET_REPOS)}] Searching {repo} ===", flush=True)
         repo_pairs = 0
 
-        for query in SEARCH_QUERIES:
-            logger.info("  Query: '%s'", query)
+        for q_idx, query in enumerate(SEARCH_QUERIES):
+            print(f"  [{q_idx+1}/{len(SEARCH_QUERIES)}] Query: '{query}'", end="", flush=True)
 
             issues = client.search_issues(repo, query, max_results=30)
+            new_issues = 0
 
             for issue in issues:
                 number = issue.get("number", 0)
@@ -457,6 +475,7 @@ def collect_all(output_path: Path, verbose: bool = False) -> None:
                 if pair_id in seen_issue_ids:
                     continue
                 seen_issue_ids.add(pair_id)
+                new_issues += 1
 
                 # Fetch full issue + comments.
                 detail = client.get_issue_with_comments(repo, number)
@@ -471,10 +490,12 @@ def collect_all(output_path: Path, verbose: bool = False) -> None:
                 # Small delay between issue fetches.
                 time.sleep(0.3)
 
-            # Rate limit between search queries.
-            time.sleep(1.5)
+            print(f" -> {len(issues)} results, {new_issues} new, {repo_pairs} pairs so far", flush=True)
 
-        logger.info("  %s: %d pairs collected", repo, repo_pairs)
+            # Rate limit between search queries.
+            time.sleep(1.0)
+
+        print(f"  {repo}: {repo_pairs} pairs collected (total: {len(all_pairs)})", flush=True)
 
     # Final dedup by content hash (different issues, same content).
     unique_pairs = []

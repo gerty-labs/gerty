@@ -1,6 +1,6 @@
 # Volume Assessment Summary
 
-**Date**: 2026-03-01 (updated after expansion sprint)
+**Date**: 2026-03-01 (updated after GitHub issues collection)
 **Objective**: Track progress toward training dataset target.
 
 ## Current State
@@ -11,42 +11,42 @@
 | K8s docs | 250 | 300 | DONE | Generated via `generate_k8s_docs_pairs.py`. Covers 70+ topics across 11 categories. |
 | Expert | 300 | 191 | DONE | Generated via `generate_expert_pairs.py`. 12 runtimes, 40+ workload types, deep operational knowledge. |
 | VPA source | 500 | 69 | DONE | Generated via `generate_vpa_pairs.py`. Deep algorithmic pairs (avg 1,384 chars/assistant). |
-| GitHub issues | 1,500 | 0 | PENDING | Script scaffolded. Needs GITHUB_TOKEN and implementation. |
+| GitHub issues | 1,500 | 530 | DONE | Collected via `collect_gh_issues.py`. 4 repos, 15 queries, avg 1,777 chars/assistant. |
 | Synthetic | 3,250 | 0 | PENDING | Generated programmatically from rules engine. Covers the gap. |
-| **TOTAL** | **8,000** | **2,969** | | |
+| **TOTAL** | **8,000** | **3,499** | | |
 
 ## Real Pairs Summary
 
 | Source | Count | Avg Assistant Length | Quality |
 |--------|-------|---------------------|---------|
 | Stack Overflow | 2,409 | ~300 chars | Variable (community-sourced, needs review) |
+| GitHub issues | 530 | 1,777 chars | Good (real issues + resolutions, needs review) |
 | K8s docs | 300 | ~800 chars | High (domain-expert generated) |
 | Expert | 191 | ~1,000 chars | Highest (deep operational knowledge) |
 | VPA source | 69 | 1,384 chars | Highest (algorithmic + scenario-based) |
-| **Real total** | **2,969** | | |
+| **Real total** | **3,499** | | |
 
 ## Category Distribution (across all real sources)
 
 Estimated based on individual source reports:
 
-| Category | K8s Docs | Expert | VPA Source | SO (est.) | Total Est. |
-|----------|----------|--------|-----------|-----------|-----------|
-| right-sizing | 191 | 81 | 46 | ~1,200 | ~1,518 |
-| edge-case | 67 | 54 | 16 | ~600 | ~737 |
-| classification | 31 | 19 | 7 | ~300 | ~357 |
-| runtime-specific | 11 | 37 | 0 | ~300 | ~348 |
+| Category | K8s Docs | Expert | VPA Source | GitHub | SO (est.) | Total Est. |
+|----------|----------|--------|-----------|--------|-----------|-----------|
+| right-sizing | 191 | 81 | 46 | 157 | ~1,200 | ~1,675 |
+| edge-case | 67 | 54 | 16 | 238 | ~600 | ~975 |
+| classification | 31 | 19 | 7 | 27 | ~300 | ~384 |
+| runtime-specific | 11 | 37 | 0 | 108 | ~300 | ~456 |
 
 ## Gap Analysis
 
-**Real data gap**: 2,969 of 4,750 real target (62.5% achieved).
+**Real data achieved**: 3,499 of 4,750 real target (73.7% achieved).
 
 **Remaining work:**
-1. **GitHub issues (~500-800 expected)**: Implement API collection script. Would bring real total to ~3,500-3,800.
-2. **Synthetic (~3,250)**: Programmatic generation from rules engine. Covers remaining gap to 8,000.
+1. **Synthetic (~4,500)**: Programmatic generation from rules engine. Covers remaining gap to 8,000.
 
-**Revised composition estimate** (after all sources):
-- Real data: ~3,500-3,800 pairs (44-48%)
-- Synthetic: ~4,200-4,500 pairs (52-56%)
+**Revised composition estimate** (after all real sources):
+- Real data: 3,499 pairs (43.7%)
+- Synthetic: ~4,500 pairs (56.3%)
 
 This is higher synthetic ratio than originally planned (40%). Acceptable because:
 - Synthetic pairs can be programmatically validated against safety invariants
@@ -55,6 +55,13 @@ This is higher synthetic ratio than originally planned (40%). Acceptable because
 - Quality is controllable and consistent
 
 ## Quality Highlights
+
+### GitHub issues (530) — real-world operational context
+- 246 pairs from kubernetes/kubernetes (OOMKill, throttling, resource management)
+- 198 pairs from kubernetes/autoscaler (VPA/HPA behavior, recommendations)
+- 50 pairs from kubernetes-sigs/descheduler (eviction, rebalancing)
+- 36 pairs from FairwindsOps/goldilocks (VPA dashboard, recommendations)
+- Average 1,777 chars per assistant response (richest after VPA source)
 
 ### Expert pairs (191) — highest value per pair
 - 12 runtime-specific patterns (JVM, Go, Python, Node.js, .NET, Ruby, Erlang, Rust, PHP, Scala, C++, Wasm)
@@ -79,11 +86,10 @@ This is higher synthetic ratio than originally planned (40%). Acceptable because
 
 ## Next Steps
 
-1. **GitHub issues**: Set GITHUB_TOKEN, implement collection script, generate ~500-800 pairs
-2. **Synthetic generation**: Build `generate_synthetic.py` using rules engine logic
-3. **Human review**: Review SO pairs, flag low-quality for removal
-4. **Format consolidation**: Run `format_instruct.py` to merge all sources into final JSONL
-5. **Quality metrics**: Compute dataset statistics (length distribution, category balance, duplicate detection)
+1. **Synthetic generation**: Build `generate_synthetic.py` using rules engine logic (~4,500 pairs)
+2. **Human review**: Review SO + GitHub pairs, flag low-quality for removal
+3. **Format consolidation**: Run `format_instruct.py` to merge all sources into final JSONL
+4. **Quality metrics**: Compute dataset statistics (length distribution, category balance, duplicate detection)
 
 ## Attribution Requirements
 
