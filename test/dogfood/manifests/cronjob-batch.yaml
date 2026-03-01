@@ -1,27 +1,35 @@
-apiVersion: batch/v1
-kind: CronJob
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: cronjob-batch
+  name: batch-worker
   labels:
-    app: cronjob-batch
+    app: batch-worker
 spec:
-  schedule: "*/5 * * * *"
-  jobTemplate:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: batch-worker
+  template:
+    metadata:
+      labels:
+        app: batch-worker
     spec:
-      template:
-        metadata:
-          labels:
-            app: cronjob-batch
-        spec:
-          containers:
-            - name: batch
-              image: polinux/stress-ng
-              command: ["stress-ng", "--cpu", "2", "--timeout", "30s"]
-              resources:
-                requests:
-                  cpu: "2"
-                  memory: 1Gi
-                limits:
-                  cpu: "4"
-                  memory: 2Gi
-          restartPolicy: OnFailure
+      containers:
+        - name: batch
+          image: polinux/stress-ng
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              while true; do
+                echo "$(date): starting batch burst"
+                stress-ng --cpu 2 --timeout 30s
+                echo "$(date): burst done, sleeping"
+                sleep 270
+              done
+          resources:
+            requests:
+              cpu: "2"
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 2Gi
