@@ -1,4 +1,5 @@
-.PHONY: build test lint clean docker-build dev-cluster dev-deploy test-integration backtest test-safety
+.PHONY: build test lint clean docker-build dev-cluster dev-deploy test-integration backtest test-safety \
+	dogfood setup-workloads generate-load validate validate-classifications validate-recommendations validate-savings teardown
 
 BINARY_DIR := bin
 
@@ -35,3 +36,25 @@ test-safety:
 
 test-integration:
 	go test ./test/integration/... -v -tags=integration
+
+dogfood: dev-cluster dev-deploy setup-workloads generate-load
+
+setup-workloads:
+	test/dogfood/setup-workloads.sh
+
+generate-load:
+	test/dogfood/generate-load.sh
+
+validate: validate-classifications validate-recommendations validate-savings
+
+validate-classifications:
+	test/dogfood/validate-classifications.sh
+
+validate-recommendations:
+	test/dogfood/validate-recommendations.sh
+
+validate-savings:
+	test/dogfood/validate-savings.sh
+
+teardown:
+	test/dogfood/teardown.sh
