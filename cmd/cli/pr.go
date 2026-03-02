@@ -11,16 +11,29 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// cliAllowedCommands is the set of binaries that cliRunner will execute.
+var cliAllowedCommands = map[string]bool{
+	"gh":      true,
+	"git":     true,
+	"kubectl": true,
+}
+
 // cliRunner implements pr.CommandRunner using os/exec.
+// It restricts execution to cliAllowedCommands to prevent command injection.
 type cliRunner struct{}
 
 func (r *cliRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...) // nosemgrep: dangerous-exec-command — name is hardcoded at call sites (gh, kubectl, git)
-	return cmd.Output()
+	if !cliAllowedCommands[name] {
+		return nil, fmt.Errorf("command %q not in allowlist", name)
+	}
+	return exec.CommandContext(ctx, name, args...).Output()
 }
 
 func (r *cliRunner) RunInDir(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...) // nosemgrep: dangerous-exec-command — name is hardcoded at call sites
+	if !cliAllowedCommands[name] {
+		return nil, fmt.Errorf("command %q not in allowlist", name)
+	}
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	return cmd.Output()
 }

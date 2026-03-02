@@ -34,6 +34,17 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+_ALLOWED_SCHEMES = {"http", "https"}
+
+
+def _safe_urlopen(req, **kwargs):
+    """Wrapper around urlopen that rejects non-HTTP schemes (e.g. file://)."""
+    url = req.full_url if isinstance(req, urllib.request.Request) else req
+    scheme = urllib.parse.urlparse(url).scheme.lower()
+    if scheme not in _ALLOWED_SCHEMES:
+        raise ValueError(f"URL scheme {scheme!r} not allowed, must be http or https")
+    return urllib.request.urlopen(req, **kwargs)
+
 SYSTEM_PROMPT = (
     "You are k8s-sage, a Kubernetes resource efficiency specialist. "
     "Analyse the provided workload metrics and give actionable right-sizing "
@@ -159,8 +170,7 @@ class GitHubClient:
         is_search = "/search/" in url
 
         try:
-            # nosemgrep: dynamic-urllib-use-detected — URL from GitHub API, not user input
-            with urllib.request.urlopen(req, context=self._ssl_ctx, timeout=30) as resp:
+            with _safe_urlopen(req, context=self._ssl_ctx, timeout=30) as resp:
                 # Update rate limit tracking (search and core APIs have separate limits).
                 remaining = int(
                     resp.headers.get("X-RateLimit-Remaining", 999)
