@@ -1,0 +1,57 @@
+name: Mutation Testing
+
+on:
+  push:
+    branches: [main]
+
+# Mutation testing is slow (~10-30 min). Run on push to main only, not PRs.
+jobs:
+  go-mutation:
+    name: Go (gremlins)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - uses: go-gremlins/gremlins-action@v1
+        with:
+          version: "latest"
+          args: "unleash --tags='!integration' --threshold 0.60"
+          workdir: "."
+
+  python-mutation:
+    name: Python (mutmut)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install mutmut pytest
+          pip install -e ".[train,eval]" 2>/dev/null || true
+      - name: Restore mutmut cache
+        uses: actions/cache@v4
+        with:
+          path: .mutmut-cache
+          key: mutmut-${{ github.ref }}-${{ hashFiles('ml/**/*.py') }}
+          restore-keys: |
+            mutmut-${{ github.ref }}-
+            mutmut-refs/heads/main-
+      - name: Run mutmut
+        run: |
+          mutmut run --paths-to-mutate=ml/dataset/generate_synthetic.py \
+            --no-progress --CI || true
+      - name: Show results
+        if: always()
+        run: mutmut results || true
+      - name: Generate HTML report
+        if: always()
+        run: mutmut html || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-report-python
+          path: html/
