@@ -23,7 +23,14 @@ jobs:
       - run: ruff check ml/
       - uses: azure/setup-helm@v4
       - run: helm lint deploy/helm/k8s-sage/
-      - run: make test
+      - name: Unit tests
+        run: go test -p 4 -timeout 120s -race -count=1 ./...
+      - name: Generate coverage
+        run: go test -p 4 -timeout 120s -coverprofile=coverage.out ./...
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
 
   backtest:
     runs-on: ubuntu-latest
