@@ -34,7 +34,7 @@ var validRisks = map[string]bool{
 	"HIGH":   true,
 }
 
-var jsonBlockRe = regexp.MustCompile("(?s)```(?:json)?\\s*(\\{.*?\\})\\s*```")
+var jsonBlockRe = regexp.MustCompile("(?s)```(?:json)?\\s*(\\{[^`]*\\})\\s*```")
 
 // ParseRecommendation extracts a structured recommendation from raw SLM output.
 func ParseRecommendation(raw string) (*SLMOutput, error) {

@@ -1,0 +1,26 @@
+# Training data and ML pipeline (not needed in runtime images)
+ml/
+*.jsonl
+
+# Test fixtures and test code
+test/
+*_test.go
+
+# Documentation
+docs/
+*.md
+LICENSE
+COPYRIGHT
+
+# Development tooling
+.github/
+.claude/
+scripts/
+deploy/
+.git/
+.gitignore
+.dockerignore
+
+# Build artifacts
+*.out
+coverage.out

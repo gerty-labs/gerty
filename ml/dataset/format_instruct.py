@@ -141,7 +141,7 @@ def validate_metric_plausibility(pair: dict) -> list[str]:
 
     # Check for zero recommendations in assistant text.
     assistant = pair.get("assistant", "")
-    if re.search(r"[Rr]ecommend(?:ed|ation)?.*?(?:request|req).*?0\s*m\b", assistant):
+    if re.search(r"[Rr]ecommend(?:ed|ation)?[^.]{0,80}(?:request|req)[^.]{0,40}0\s*m\b", assistant):
         # Check if this is in a "do not reduce" context
         if "do not" not in assistant.lower() and "keep" not in assistant.lower():
             errors.append("Recommendation of 0m CPU detected (safety violation)")
