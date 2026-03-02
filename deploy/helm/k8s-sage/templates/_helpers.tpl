@@ -71,25 +71,42 @@ Service account name.
 {{- end }}
 
 {{/*
-Agent image reference.
+Agent image reference. Prefers digest over tag when set (marketplace override).
 */}}
 {{- define "k8s-sage.agent.image" -}}
-{{- $tag := .Values.image.tag | default .Chart.AppVersion }}
+{{- $repo := .Values.agent.image.repository }}
 {{- if .Values.image.registry }}
-{{- printf "%s/%s:%s" .Values.image.registry .Values.agent.image.repository $tag }}
+{{- $repo = printf "%s/%s" .Values.image.registry .Values.agent.image.repository }}
+{{- end }}
+{{- if .Values.agent.image.digest }}
+{{- printf "%s@%s" $repo .Values.agent.image.digest }}
 {{- else }}
-{{- printf "%s:%s" .Values.agent.image.repository $tag }}
+{{- printf "%s:%s" $repo (.Values.image.tag | default .Chart.AppVersion) }}
 {{- end }}
 {{- end }}
 
 {{/*
-Server image reference.
+Server image reference. Prefers digest over tag when set (marketplace override).
 */}}
 {{- define "k8s-sage.server.image" -}}
-{{- $tag := .Values.image.tag | default .Chart.AppVersion }}
+{{- $repo := .Values.server.image.repository }}
 {{- if .Values.image.registry }}
-{{- printf "%s/%s:%s" .Values.image.registry .Values.server.image.repository $tag }}
+{{- $repo = printf "%s/%s" .Values.image.registry .Values.server.image.repository }}
+{{- end }}
+{{- if .Values.server.image.digest }}
+{{- printf "%s@%s" $repo .Values.server.image.digest }}
 {{- else }}
-{{- printf "%s:%s" .Values.server.image.repository $tag }}
+{{- printf "%s:%s" $repo (.Values.image.tag | default .Chart.AppVersion) }}
+{{- end }}
+{{- end }}
+
+{{/*
+SLM image reference. Prefers digest over tag when set (marketplace override).
+*/}}
+{{- define "k8s-sage.slm.image" -}}
+{{- if .Values.slm.image.digest }}
+{{- printf "%s@%s" .Values.slm.image.repository .Values.slm.image.digest }}
+{{- else }}
+{{- printf "%s:%s" .Values.slm.image.repository .Values.slm.image.tag }}
 {{- end }}
 {{- end }}

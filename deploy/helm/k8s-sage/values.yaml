@@ -9,6 +9,7 @@ image:
 agent:
   image:
     repository: k8s-sage-agent
+    digest: ""  # overridden by marketplace (e.g., sha256:abc...)
   resources:
     requests:
       cpu: 50m
@@ -24,6 +25,7 @@ agent:
 server:
   image:
     repository: k8s-sage-server
+    digest: ""  # overridden by marketplace (e.g., sha256:abc...)
   replicas: 1
   resources:
     requests:
@@ -43,6 +45,7 @@ slm:
   image:
     repository: ghcr.io/ggerganov/llama.cpp
     tag: server
+    digest: ""  # overridden by marketplace (e.g., sha256:abc...)
   model: /models/k8s-sage-q4.gguf
   args:
     - "--ctx-size"
@@ -62,6 +65,9 @@ slm:
     enabled: true
     size: 5Gi
     storageClass: ""
+
+gcpMarketplace:
+  enabled: false
 
 serviceAccount:
   create: true
