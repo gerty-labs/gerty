@@ -114,6 +114,12 @@ func (a *Aggregator) PruneStalePods() int {
 // It stops when the provided done channel is closed.
 func (a *Aggregator) StartPruner(done <-chan struct{}) {
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("pruner goroutine panicked", "panic", r)
+			}
+		}()
+
 		ticker := time.NewTicker(pruneInterval)
 		defer ticker.Stop()
 

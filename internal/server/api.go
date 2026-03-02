@@ -154,7 +154,7 @@ func (api *API) HandleIngest(w http.ResponseWriter, r *http.Request) {
 	var report models.NodeReport
 	if err := json.Unmarshal(body, &report); err != nil {
 		slog.Warn("malformed ingest JSON", "error", err, "remoteAddr", r.RemoteAddr)
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("malformed JSON: %s", err.Error()))
+		writeError(w, http.StatusBadRequest, "malformed JSON")
 		return
 	}
 
@@ -312,7 +312,8 @@ func (api *API) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxIngestBodyBytes)
 	var req analyzeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %s", err.Error()))
+		slog.Warn("malformed analyze JSON", "error", err, "remoteAddr", r.RemoteAddr)
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 

@@ -54,9 +54,12 @@ func (w *WebhookClient) Send(ctx context.Context, payload WebhookPayload) error 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return fmt.Errorf("slack webhook returned %d: %s", resp.StatusCode, string(respBody))
 	}
+
+	// Drain body to enable connection reuse.
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	return nil
 }

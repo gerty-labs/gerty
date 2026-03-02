@@ -59,7 +59,7 @@ Use --output json for machine-readable output.`,
 
 			cmds := gitops.GenerateAnnotateCommands(mappings)
 			for _, c := range cmds {
-				fmt.Fprintln(os.Stdout, c)
+				fmt.Fprintln(os.Stdout, c.Display)
 			}
 			return nil
 		},

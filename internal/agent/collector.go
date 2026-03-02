@@ -17,8 +17,13 @@ type Collector struct {
 	interval time.Duration
 }
 
+const minCollectInterval = 100 * time.Millisecond
+
 // NewCollector creates a Collector with a real kubelet HTTP client.
 func NewCollector(kubeletURL string, store *Store, interval time.Duration) *Collector {
+	if interval < minCollectInterval {
+		interval = minCollectInterval
+	}
 	return &Collector{
 		client:   NewHTTPKubeletClient(kubeletURL),
 		store:    store,
@@ -28,6 +33,9 @@ func NewCollector(kubeletURL string, store *Store, interval time.Duration) *Coll
 
 // NewCollectorWithClient creates a Collector with an injected KubeletClient (for testing).
 func NewCollectorWithClient(client KubeletClient, store *Store, interval time.Duration) *Collector {
+	if interval < minCollectInterval {
+		interval = minCollectInterval
+	}
 	return &Collector{
 		client:   client,
 		store:    store,

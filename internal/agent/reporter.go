@@ -75,30 +75,25 @@ func (r *Reporter) buildReport() models.NodeReport {
 		}
 
 		for _, key := range containerKeys {
-			summary, ok := r.store.GetContainerSummary(key)
-			if !ok {
-				continue
-			}
-
-			meta, ok := r.store.GetContainerMeta(key)
-			if !ok {
+			snap := r.store.GetContainerSnapshot(key)
+			if !snap.OK {
 				continue
 			}
 
 			if podWaste.QoSClass == "" {
-				podWaste.QoSClass = meta.QoSClass
+				podWaste.QoSClass = snap.Meta.QoSClass
 			}
 
 			// Set owner reference from container metadata (same for all containers in a pod).
-			if podWaste.OwnerRef.Kind == "" && meta.OwnerKind != "" {
+			if podWaste.OwnerRef.Kind == "" && snap.Meta.OwnerKind != "" {
 				podWaste.OwnerRef = models.OwnerReference{
-					Kind:      meta.OwnerKind,
-					Name:      meta.OwnerName,
+					Kind:      snap.Meta.OwnerKind,
+					Name:      snap.Meta.OwnerName,
 					Namespace: pk.namespace,
 				}
 			}
 
-			cw := computeContainerWaste(summary, meta, r.store.DataWindow(key))
+			cw := computeContainerWaste(snap.Summary, snap.Meta, snap.DataWindow)
 			podWaste.Containers = append(podWaste.Containers, cw)
 			podWaste.TotalCPUWasteMillis += cw.CPUWasteMillis
 			podWaste.TotalMemWasteBytes += cw.MemWasteBytes

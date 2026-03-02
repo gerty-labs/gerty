@@ -45,7 +45,7 @@ type Notifier struct {
 // NewNotifier creates a Notifier that sends recommendation digests to Slack.
 func NewNotifier(config Config, source ClusterReporter, engine *rules.Engine) *Notifier {
 	interval := config.DigestInterval
-	if interval == 0 {
+	if interval <= 0 {
 		interval = defaultDigestInterval
 	}
 	config.DigestInterval = interval

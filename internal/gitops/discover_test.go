@@ -228,6 +228,7 @@ func TestGenerateAnnotateCommands(t *testing.T) {
 
 	cmds := GenerateAnnotateCommands(mappings)
 	require.Len(t, cmds, 2)
-	assert.Equal(t, "sage annotate deployment/api -n prod --repo https://github.com/acme/manifests --path apps/api", cmds[0])
-	assert.Equal(t, "sage annotate statefulset/redis -n cache --repo https://github.com/acme/infra --path redis", cmds[1])
+	assert.Equal(t, "sage annotate deployment/api -n prod --repo https://github.com/acme/manifests --path apps/api", cmds[0].Display)
+	assert.Equal(t, []string{"annotate", "deployment/api", "-n", "prod", "--repo", "https://github.com/acme/manifests", "--path", "apps/api"}, cmds[0].Args)
+	assert.Equal(t, "sage annotate statefulset/redis -n cache --repo https://github.com/acme/infra --path redis", cmds[1].Display)
 }

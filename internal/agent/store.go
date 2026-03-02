@@ -497,6 +497,94 @@ func (s *Store) DataWindow(key string) time.Duration {
 	return latest.Sub(earliest)
 }
 
+// ContainerSnapshot holds a consistent point-in-time snapshot of a container's
+// summary, metadata, and data window, captured under a single lock acquisition.
+type ContainerSnapshot struct {
+	Summary    models.AggregatedMetrics
+	Meta       ContainerMeta
+	DataWindow time.Duration
+	OK         bool
+}
+
+// GetContainerSnapshot returns summary, meta, and data window for a container
+// in a single lock acquisition, ensuring consistency across all three values.
+func (s *Store) GetContainerSnapshot(key string) ContainerSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ts, exists := s.containers[key]
+	if !exists {
+		return ContainerSnapshot{}
+	}
+
+	// Compute summary.
+	var allBuckets []bucket
+	allBuckets = append(allBuckets, ts.coarseBuckets...)
+	allBuckets = append(allBuckets, ts.fineBuckets...)
+
+	if len(ts.rawSamples) > 0 {
+		now := s.now()
+		allBuckets = append(allBuckets, aggregateSamples(ts.rawSamples, now.Add(-rawBufferDuration), rawBufferDuration))
+	}
+
+	if len(allBuckets) == 0 {
+		return ContainerSnapshot{}
+	}
+
+	merged := allBuckets[0]
+	for _, b := range allBuckets[1:] {
+		merged = mergeTwo(merged, b)
+	}
+
+	// Compute data window.
+	var earliest, latest time.Time
+	if len(ts.coarseBuckets) > 0 {
+		earliest = ts.coarseBuckets[0].start
+		latest = ts.coarseBuckets[len(ts.coarseBuckets)-1].end
+	}
+	if len(ts.fineBuckets) > 0 {
+		if earliest.IsZero() || ts.fineBuckets[0].start.Before(earliest) {
+			earliest = ts.fineBuckets[0].start
+		}
+		if ts.fineBuckets[len(ts.fineBuckets)-1].end.After(latest) {
+			latest = ts.fineBuckets[len(ts.fineBuckets)-1].end
+		}
+	}
+	if len(ts.rawSamples) > 0 {
+		if earliest.IsZero() || ts.rawSamples[0].timestamp.Before(earliest) {
+			earliest = ts.rawSamples[0].timestamp
+		}
+		last := ts.rawSamples[len(ts.rawSamples)-1].timestamp
+		if last.After(latest) {
+			latest = last
+		}
+	}
+
+	var dataWindow time.Duration
+	if !earliest.IsZero() {
+		dataWindow = latest.Sub(earliest)
+	}
+
+	return ContainerSnapshot{
+		Summary: bucketToAggregated(ts, merged),
+		Meta: ContainerMeta{
+			PodName:          ts.podName,
+			PodNamespace:     ts.podNamespace,
+			ContainerName:    ts.containerName,
+			CPURequestMillis: ts.cpuRequestMillis,
+			CPULimitMillis:   ts.cpuLimitMillis,
+			MemRequestBytes:  ts.memRequestBytes,
+			MemLimitBytes:    ts.memLimitBytes,
+			RestartCount:     ts.restartCount,
+			QoSClass:         ts.qosClass,
+			OwnerKind:        ts.ownerKind,
+			OwnerName:        ts.ownerName,
+		},
+		DataWindow: dataWindow,
+		OK:         true,
+	}
+}
+
 func bucketToAggregated(ts *containerTimeSeries, b bucket) models.AggregatedMetrics {
 	return models.AggregatedMetrics{
 		PodName:          ts.podName,

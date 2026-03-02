@@ -50,13 +50,22 @@ func (d *Discoverer) Discover(ctx context.Context) ([]GitOpsMapping, error) {
 	return mappings, nil
 }
 
-// GenerateAnnotateCommands returns sage annotate commands for each mapping.
-func GenerateAnnotateCommands(mappings []GitOpsMapping) []string {
-	var cmds []string
+// AnnotateCommand holds a structured sage annotate invocation.
+// Use Args with exec.Command("sage", args...) — do not join into a shell string.
+type AnnotateCommand struct {
+	Args    []string // e.g., ["annotate", "deployment/nginx", "-n", "default", "--repo", "...", "--path", "..."]
+	Display string   // human-readable form for display only
+}
+
+// GenerateAnnotateCommands returns structured sage annotate commands for each mapping.
+func GenerateAnnotateCommands(mappings []GitOpsMapping) []AnnotateCommand {
+	var cmds []AnnotateCommand
 	for _, m := range mappings {
-		cmd := fmt.Sprintf("sage annotate %s/%s -n %s --repo %s --path %s",
-			strings.ToLower(m.Kind), m.Name, m.Namespace, m.RepoURL, m.Path)
-		cmds = append(cmds, cmd)
+		target := strings.ToLower(m.Kind) + "/" + m.Name
+		args := []string{"annotate", target, "-n", m.Namespace, "--repo", m.RepoURL, "--path", m.Path}
+		display := fmt.Sprintf("sage annotate %s -n %s --repo %s --path %s",
+			target, m.Namespace, m.RepoURL, m.Path)
+		cmds = append(cmds, AnnotateCommand{Args: args, Display: display})
 	}
 	return cmds
 }

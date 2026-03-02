@@ -81,7 +81,7 @@ func TestPusher_Run_CancelsGracefully(t *testing.T) {
 	reporter := NewReporter("test-node", store)
 	pusher := NewPusher(ts.URL, reporter, 50*time.Millisecond)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	pusher.Run(ctx)

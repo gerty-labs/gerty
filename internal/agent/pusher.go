@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -18,8 +19,13 @@ type Pusher struct {
 	client    *http.Client
 }
 
+const minPushInterval = 100 * time.Millisecond
+
 // NewPusher creates a Pusher that sends reports to serverURL every interval.
 func NewPusher(serverURL string, reporter *Reporter, interval time.Duration) *Pusher {
+	if interval < minPushInterval {
+		interval = minPushInterval
+	}
 	return &Pusher{
 		serverURL: serverURL,
 		reporter:  reporter,
@@ -66,10 +72,14 @@ func (p *Pusher) pushOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("posting report: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusTooManyRequests {
-		return fmt.Errorf("server returned status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	slog.Info("pushed report to server",
