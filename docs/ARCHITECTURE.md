@@ -351,6 +351,10 @@ Above + llama.cpp Deployment running k8s-sage SLM. Additional overhead: ~2.5Gi f
 - Slack integration scaffold: ticker-based notifier, Block Kit messages, severity/dedup, Helm config
 - GitOps discovery: ArgoCD Application + Flux Kustomization parsing, `sage discover` CLI subcommand
 - Models package test suite (30 tests)
+- PR creation flow: `sage pr` CLI subcommand (gh CLI + kubectl, dry-run support)
+- Security pipeline: SonarCloud (A rating, zero security issues), Semgrep CI, Gremlins mutation testing (60% threshold), SHA-pinned GitHub Actions, kubelet TLS CA chain verification, regex DoS hardening
+- Test coverage push: agent 83.8%, server 92.8%, slm 91.3%, pr 70.7% — 49 new test functions across runtime-critical packages
+- Marketplace readiness: base image digest pinning, Helm image digest override support (agent/server/slm), GCP Application CR (gated), deployment guide for AWS/Azure/GCP (`docs/MARKETPLACE_DEPLOYMENT.md`)
 
 ### Ready (blocked on GPU)
 - Fine-tune Jamba 3B on Threadripper + dual RTX 3090 (`./scripts/train.sh`)
@@ -358,9 +362,8 @@ Above + llama.cpp Deployment running k8s-sage SLM. Additional overhead: ~2.5Gi f
 - Dogfood v2 (L1 with fixes) and v3 (with L2)
 
 ### Remaining
-- PR creation flow for automated right-sizing
 - KWOK scale testing
-- Marketplace listing
+- Marketplace submission: AWS (Helm chart + EKS add-on), Azure (CNAB packaging), GCP (deployer image). Technical code changes complete — remaining work is packaging artifacts and seller account onboarding. See `docs/MARKETPLACE_DEPLOYMENT.md` for full checklists.
 
 ---
 
@@ -380,9 +383,13 @@ Above + llama.cpp Deployment running k8s-sage SLM. Additional overhead: ~2.5Gi f
 | `internal/gitops/discover.go` | ArgoCD + Flux workload discovery |
 | `cmd/cli/annotate.go` | `sage annotate` — GitOps source annotations |
 | `cmd/cli/discover.go` | `sage discover` — auto-detect GitOps mappings |
+| `cmd/cli/pr.go` | `sage pr` — automated PR creation for right-sizing |
+| `internal/pr/creator.go` | PR creation logic (gh CLI + kubectl, manifest/values modification) |
 | `deploy/helm/k8s-sage/files/k8s-sage-dashboard.json` | Grafana dashboard |
+| `deploy/helm/k8s-sage/templates/application.yaml` | GCP Marketplace Application CR (gated) |
 | `ml/training/finetune_lora.py` | QLoRA fine-tuning (SFTTrainer) |
 | `ml/dataset/generate_synthetic.py` | Synthetic training pair generator |
 | `deploy/helm/k8s-sage/values.yaml` | Deployment configuration |
 | `docs/MODEL_DESIGN.md` | Model selection, training config, evaluation targets |
 | `docs/TRAINING_DATA.md` | Dataset methodology and provenance |
+| `docs/MARKETPLACE_DEPLOYMENT.md` | Cloud marketplace listing guide (AWS, Azure, GCP) |
