@@ -161,13 +161,17 @@ Everything included at every tier — no feature gates, no enterprise tier, no S
 | Recommendations | Statistical forecasting | Runtime-aware reasoning (understands JVM, Node, Python) |
 | GitOps | Export YAML patches manually | PR-native with ArgoCD/Flux auto-detection |
 
-### Positioning — Safety Net First, Cost Optimisation Second
+### Positioning — Cost Optimisation First, Incident Detection as Discovered Benefit
 
-"Cost optimisation tool" is a nice-to-have. "Operational safety net that catches cascading failures in real-time" is a must-have. The incident-mode priority queue and sub-10s analysis is what makes Sage worth paying for even if you don't care about saving money. Lead with this in positioning:
+Lead with cost optimisation. It's low-risk, easily provable, and compounds visibly. "We saved £X this month" is a dashboard number that makes platform teams look good to management. Right-sizing is a common pain point engineers already care about — easy to sell, safe to promise, hard to mess up.
 
-- **Primary value prop:** Real-time incident detection and automated remediation (upscale hotfix, OOM prevention, crash loop response)
-- **Secondary value prop:** Continuous right-sizing and cost reduction as a steady-state benefit
-- **Tertiary:** Runtime-aware explanations (JVM heap, Python GIL, Node event loop) that general tools can't provide
+Incident detection is a real capability but a dangerous marketing claim. If Sage markets itself as an incident response tool and then misdiagnoses a root cause, recommends the wrong memory value during a cascading failure, or adds 30 seconds of latency to a response — Sage becomes the tool that made the outage worse. That's reputation-ending for an early-stage product. Cost optimisation claims degrade gracefully (saving 15% instead of 20% is fine); incident response claims fail catastrophically under the worst possible conditions.
+
+- **Primary value prop:** Continuous right-sizing and cost reduction. Provable savings, low risk.
+- **Secondary value prop:** Runtime-aware explanations (JVM heap, Python GIL, Node event loop) that general tools can't provide. Differentiator against K8sGPT and PerfectScale.
+- **Tertiary (discovered benefit, not marketed promise):** Sage's continuous analysis catches anomalies (memory leaks, under-provisioning) before they become incidents. Frame as "Sage noticed this" not "Sage prevents outages."
+
+Hotfix is a convenience button for engineers already looking at a problem, not autonomous remediation. The engineer decides, Sage executes. Human stays in the loop, Sage stays out of the blast radius.
 
 The free tier question was evaluated and decided against. Reasoning: free users don't value the tool the same way, free anchors pricing expectations, and £30/month on a 10-node cluster is already impulse-buy territory. The 14-day trial serves the same friction removal. Worth revisiting if early adoption is slower than expected.
 
