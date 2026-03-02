@@ -1079,7 +1079,7 @@ def validate_pair(pair: dict) -> list[str]:
     user = pair.get("user", "")
     # Quick check: P50 <= P95 <= P99 <= Max for CPU
     import re
-    cpu_match = re.search(r"P50=([0-9.]+)m.*?P95=([0-9.]+)m.*?P99=([0-9.]+)m.*?Max=([0-9.]+)m", user)
+    cpu_match = re.search(r"P50=([0-9.]+)m[^P]{0,80}P95=([0-9.]+)m[^P]{0,80}P99=([0-9.]+)m[^M]{0,80}Max=([0-9.]+)m", user)
     if cpu_match:
         p50, p95, p99, mx = (float(x) for x in cpu_match.groups())
         if p50 > p95:
