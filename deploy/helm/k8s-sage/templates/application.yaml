@@ -1,0 +1,37 @@
+{{- if .Values.gcpMarketplace.enabled }}
+apiVersion: app.kubernetes.io/v1beta1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "k8s-sage.labels" . | nindent 4 }}
+  annotations:
+    marketplace.cloud.google.com/deploy-info: '{"partner_id": "k8s-sage", "product_id": "k8s-sage"}'
+spec:
+  descriptor:
+    type: k8s-sage
+    version: {{ .Chart.AppVersion | quote }}
+    description: "Kubernetes resource efficiency platform with deterministic right-sizing recommendations"
+    links:
+      - description: Documentation
+        url: https://github.com/gregorytcarroll/k8s-sage
+    notes: |
+      k8s-sage is deployed. Run `sage report` to see cluster-wide recommendations.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "k8s-sage.name" . }}
+  componentKinds:
+    - group: apps
+      kind: DaemonSet
+    - group: apps
+      kind: Deployment
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+{{- end }}

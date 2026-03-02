@@ -29,7 +29,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: llama-cpp
-          image: "{{ .Values.slm.image.repository }}:{{ .Values.slm.image.tag }}"
+          image: {{ include "k8s-sage.slm.image" . }}
           args:
             - "--model"
             - "{{ .Values.slm.model }}"
