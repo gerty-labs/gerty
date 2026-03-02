@@ -35,6 +35,10 @@ spec:
           env:
             - name: LISTEN_ADDR
               value: ":8080"
+            {{- if .Values.slm.enabled }}
+            - name: SLM_URL
+              value: "http://{{ include "k8s-sage.fullname" . }}-slm:8080"
+            {{- end }}
           resources:
             requests:
               cpu: {{ .Values.server.resources.requests.cpu }}

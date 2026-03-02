@@ -41,16 +41,27 @@ server:
 slm:
   enabled: false
   image:
-    repository: ollama/ollama
-    tag: latest
-  model: "k8s-sage:q4"
+    repository: ghcr.io/ggerganov/llama.cpp
+    tag: server
+  model: /models/k8s-sage-q4.gguf
+  args:
+    - "--ctx-size"
+    - "1024"
+    - "--threads"
+    - "2"
+    - "--port"
+    - "8080"
   resources:
     requests:
       cpu: "1"
-      memory: 3Gi
+      memory: 2.5Gi
     limits:
       cpu: "2"
-      memory: 4Gi
+      memory: 3Gi
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
 
 serviceAccount:
   create: true
