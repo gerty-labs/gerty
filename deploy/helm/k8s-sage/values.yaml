@@ -67,3 +67,7 @@ serviceAccount:
   create: true
   name: ""
   annotations: {}
+
+grafana:
+  dashboards:
+    enabled: false
