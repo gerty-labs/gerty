@@ -169,7 +169,7 @@ Incident detection is a real capability but a dangerous marketing claim. If Sage
 
 - **Primary value prop:** Continuous right-sizing and cost reduction. Provable savings, low risk.
 - **Secondary value prop:** Runtime-aware explanations (JVM heap, Python GIL, Node event loop) that general tools can't provide. Differentiator against K8sGPT and PerfectScale.
-- **Tertiary (discovered benefit, not marketed promise):** Sage's continuous analysis catches anomalies (memory leaks, under-provisioning) before they become incidents. Frame as "Sage noticed this" not "Sage prevents outages."
+- **Optional add-on (off by default):** Incident detection mode — anomaly alerts, memory leak flagging, OOM early warning. Opt-in via `incidents.enabled: true`. Valuable for teams that want it, but not part of the core pitch and not enabled unless explicitly chosen.
 
 Hotfix is a convenience button for engineers already looking at a problem, not autonomous remediation. The engineer decides, Sage executes. Human stays in the loop, Sage stays out of the blast radius.
 

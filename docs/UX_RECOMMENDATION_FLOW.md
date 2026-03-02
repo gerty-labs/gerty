@@ -244,8 +244,8 @@ Sage does not re-send recommendations that have already been delivered and are e
 
 | Tier | Trigger | Behaviour |
 |---|---|---|
-| **🔴 Critical** | Active OOM kills, crash loops, sustained throttling | Sent immediately, outside batch cycle. Engineer must still confirm hotfix — Sage never auto-applies changes without human approval. |
-| **🟡 Optimisation** | Over-provisioned resources, cost savings | Batched per cycle, grouped by namespace |
+| **🔴 Critical** | Active OOM kills, crash loops, sustained throttling | **Requires `incidents.enabled: true`.** Sent immediately, outside batch cycle. Engineer must still confirm hotfix — Sage never auto-applies changes without human approval. |
+| **🟡 Optimisation** | Over-provisioned resources, cost savings | Batched per cycle, grouped by namespace. **This is the core product.** |
 | **🟢 Informational** | Minor tweaks, low confidence suggestions | Rolled into a daily or weekly digest (configurable) |
 
 Engineers configure their noise tolerance:
