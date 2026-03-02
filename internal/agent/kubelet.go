@@ -132,11 +132,23 @@ func NewHTTPKubeletClient(baseURL string) *httpKubeletClient {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				// nosemgrep: missing-ssl-minversion, bypass-tls-verification — kubelet uses self-signed certs
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, // #nosec G402
-				MinVersion:         tls.VersionTLS13,
-			},
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true, // #nosec G402 — kubelet uses self-signed certs
+					MinVersion:         tls.VersionTLS13,
+					// nosemgrep: bypass-tls-verification
+					VerifyConnection: func(cs tls.ConnectionState) error {
+						if len(cs.PeerCertificates) == 0 {
+							return fmt.Errorf("kubelet presented no TLS certificates")
+						}
+						leaf := cs.PeerCertificates[0]
+						now := time.Now()
+						if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
+							return fmt.Errorf("kubelet certificate expired: valid %s to %s",
+								leaf.NotBefore.Format(time.RFC3339), leaf.NotAfter.Format(time.RFC3339))
+						}
+						return nil
+					},
+				},
 			},
 		},
 		token: string(tokenBytes),
