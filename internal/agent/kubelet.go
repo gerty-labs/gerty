@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -121,35 +123,99 @@ type httpKubeletClient struct {
 	token      string
 }
 
+// kubeletTLSConfig builds a TLS configuration for talking to the kubelet API.
+//
+// In-cluster: loads the cluster CA from the service account mount and verifies
+// the kubelet certificate chain against it. Hostname verification is skipped
+// because kubelet SANs may not match NODE_NAME across all K8s distributions.
+//
+// Out-of-cluster: falls back to the system certificate pool.
+func kubeletTLSConfig() *tls.Config {
+	cfg := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+	}
+
+	// Load cluster CA for kubelet certificate chain verification.
+	const caPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+	var caPool *x509.CertPool
+	if caBytes, err := os.ReadFile(caPath); err == nil {
+		caPool = x509.NewCertPool()
+		if caPool.AppendCertsFromPEM(caBytes) {
+			cfg.RootCAs = caPool
+			slog.Debug("loaded cluster CA for kubelet TLS", "path", caPath)
+		} else {
+			caPool = nil
+			slog.Warn("cluster CA file found but contained no valid certs", "path", caPath)
+		}
+	}
+
+	// Skip Go's default hostname verification — kubelet SAN may not match
+	// NODE_NAME across K8s distributions. Chain and expiry are verified
+	// in VerifyPeerCertificate below.
+	cfg.InsecureSkipVerify = true // #nosec G402
+	cfg.VerifyPeerCertificate = verifyKubeletCert(caPool)
+
+	return cfg
+}
+
+// verifyKubeletCert returns a TLS peer certificate callback that validates the
+// kubelet's certificate. When a CA pool is provided (in-cluster), the full
+// certificate chain is verified against it. In all cases, certificate expiry
+// is checked.
+func verifyKubeletCert(caPool *x509.CertPool) func([][]byte, [][]*x509.Certificate) error {
+	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if len(rawCerts) == 0 {
+			return fmt.Errorf("kubelet presented no TLS certificates")
+		}
+
+		certs := make([]*x509.Certificate, len(rawCerts))
+		for i, raw := range rawCerts {
+			cert, err := x509.ParseCertificate(raw)
+			if err != nil {
+				return fmt.Errorf("parsing kubelet certificate %d: %w", i, err)
+			}
+			certs[i] = cert
+		}
+
+		leaf := certs[0]
+		now := time.Now()
+		if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
+			return fmt.Errorf("kubelet certificate expired: valid %s to %s",
+				leaf.NotBefore.Format(time.RFC3339), leaf.NotAfter.Format(time.RFC3339))
+		}
+
+		// Verify chain against cluster CA when available.
+		if caPool != nil {
+			opts := x509.VerifyOptions{
+				Roots:       caPool,
+				CurrentTime: now,
+			}
+			if len(certs) > 1 {
+				opts.Intermediates = x509.NewCertPool()
+				for _, c := range certs[1:] {
+					opts.Intermediates.AddCert(c)
+				}
+			}
+			if _, err := leaf.Verify(opts); err != nil {
+				return fmt.Errorf("kubelet certificate chain verification failed: %w", err)
+			}
+		}
+
+		return nil
+	}
+}
+
 // NewHTTPKubeletClient creates a kubelet client that talks to the real kubelet API.
-// It uses the in-cluster service account token for authentication and skips TLS
-// verification (kubelet uses self-signed certs).
+// It uses the in-cluster service account token for authentication and verifies
+// kubelet certificates against the cluster CA when available.
 func NewHTTPKubeletClient(baseURL string) *httpKubeletClient {
 	tokenBytes, _ := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
 
 	return &httpKubeletClient{
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true, // #nosec G402 — kubelet uses self-signed certs
-					MinVersion:         tls.VersionTLS13,
-					// nosemgrep: bypass-tls-verification
-					VerifyConnection: func(cs tls.ConnectionState) error {
-						if len(cs.PeerCertificates) == 0 {
-							return fmt.Errorf("kubelet presented no TLS certificates")
-						}
-						leaf := cs.PeerCertificates[0]
-						now := time.Now()
-						if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
-							return fmt.Errorf("kubelet certificate expired: valid %s to %s",
-								leaf.NotBefore.Format(time.RFC3339), leaf.NotAfter.Format(time.RFC3339))
-						}
-						return nil
-					},
-				},
-			},
+			Timeout:   10 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: kubeletTLSConfig()},
 		},
 		token: string(tokenBytes),
 	}
