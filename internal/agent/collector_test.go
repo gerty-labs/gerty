@@ -345,3 +345,144 @@ func TestCollector_CollectOnce_PropagatesOwnerRef(t *testing.T) {
 	assert.Equal(t, "Deployment", meta.OwnerKind)
 	assert.Equal(t, "web-app", meta.OwnerName)
 }
+
+func TestCollector_CollectOnce_PodWithNoContainers(t *testing.T) {
+	summary := &SummaryResponse{
+		Node: NodeStats{NodeName: "test-node"},
+		Pods: []PodStats{
+			{
+				PodRef:     PodReference{Name: "empty-pod", Namespace: "default"},
+				Containers: []ContainerStats{}, // no containers
+			},
+		},
+	}
+
+	store := NewStore()
+	mock := &mockKubeletClient{response: summary}
+	collector := NewCollectorWithClient(mock, store, 30*time.Second)
+
+	// Should not panic with empty containers.
+	collector.CollectOnce(context.Background())
+
+	keys := store.ContainerKeys()
+	assert.Len(t, keys, 0, "empty pod should produce no container entries")
+}
+
+func TestCollector_CollectOnce_GetPodsFails(t *testing.T) {
+	// Summary succeeds but GetPods will fail.
+	summary := &SummaryResponse{
+		Node: NodeStats{NodeName: "test-node"},
+		Pods: []PodStats{
+			{
+				PodRef: PodReference{Name: "pod-a", Namespace: "default"},
+				Containers: []ContainerStats{
+					{
+						Name:   "app",
+						CPU:    &CPUStats{UsageNanoCores: uint64Ptr(100_000_000)},
+						Memory: &MemStats{WorkingSetBytes: uint64Ptr(50_000_000)},
+					},
+				},
+			},
+		},
+	}
+
+	mock := &mockKubeletClient{response: summary, podResponse: nil}
+	// podResponse is nil, so GetPods returns empty PodListResponse — not an error.
+	// Metrics should still be recorded, just without resource request info.
+	store := NewStore()
+	collector := NewCollectorWithClient(mock, store, 30*time.Second)
+
+	collector.CollectOnce(context.Background())
+
+	keys := store.ContainerKeys()
+	require.Len(t, keys, 1)
+
+	meta, ok := store.GetContainerMeta("default/pod-a/app")
+	require.True(t, ok)
+	// No pod spec data, so requests should be zero.
+	assert.Equal(t, int64(0), meta.CPURequestMillis)
+	assert.Equal(t, int64(0), meta.MemRequestBytes)
+}
+
+func TestCollector_CollectOnce_MismatchedPodNames(t *testing.T) {
+	// Summary has pod-a, but pod spec only has pod-b — metrics still recorded.
+	summary := &SummaryResponse{
+		Node: NodeStats{NodeName: "test-node"},
+		Pods: []PodStats{
+			{
+				PodRef: PodReference{Name: "pod-a", Namespace: "default"},
+				Containers: []ContainerStats{
+					{
+						Name:   "app",
+						CPU:    &CPUStats{UsageNanoCores: uint64Ptr(100_000_000)},
+						Memory: &MemStats{WorkingSetBytes: uint64Ptr(50_000_000)},
+					},
+				},
+			},
+		},
+	}
+
+	podList := &PodListResponse{
+		Items: []PodItem{
+			{
+				Metadata: PodItemMeta{Name: "pod-b", Namespace: "default"},
+				Spec: PodSpec{
+					Containers: []PodSpecContainer{
+						{Name: "app", Resources: ContainerResourceSpec{
+							Requests: ResourceValues{CPU: "500m", Memory: "256Mi"},
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	store := NewStore()
+	mock := &mockKubeletClient{response: summary, podResponse: podList}
+	collector := NewCollectorWithClient(mock, store, 30*time.Second)
+
+	collector.CollectOnce(context.Background())
+
+	keys := store.ContainerKeys()
+	require.Len(t, keys, 1)
+	assert.Contains(t, keys, "default/pod-a/app")
+
+	// pod-a has no matching pod spec, so resource requests are zero.
+	meta, ok := store.GetContainerMeta("default/pod-a/app")
+	require.True(t, ok)
+	assert.Equal(t, int64(0), meta.CPURequestMillis)
+}
+
+func TestCollector_CollectOnce_NilMemory(t *testing.T) {
+	summary := &SummaryResponse{
+		Node: NodeStats{NodeName: "test-node"},
+		Pods: []PodStats{
+			{
+				PodRef: PodReference{Name: "pod-nilmem", Namespace: "default"},
+				Containers: []ContainerStats{
+					{
+						Name:   "container",
+						CPU:    &CPUStats{UsageNanoCores: uint64Ptr(100_000_000)},
+						Memory: nil, // nil Memory stats
+					},
+				},
+			},
+		},
+	}
+
+	store := NewStore()
+	mock := &mockKubeletClient{response: summary}
+	collector := NewCollectorWithClient(mock, store, 30*time.Second)
+
+	// Should not panic with nil Memory.
+	collector.CollectOnce(context.Background())
+
+	keys := store.ContainerKeys()
+	require.Len(t, keys, 1)
+
+	s, ok := store.GetContainerSummary("default/pod-nilmem/container")
+	require.True(t, ok)
+	assert.Equal(t, float64(0), s.MemoryWorkingSet.P50, "memory should be zero when nil")
+	assert.Equal(t, float64(0), s.MemoryUsageBytes.P50, "memory usage should be zero when nil")
+	assert.Equal(t, float64(100_000_000), s.CPUNanoCores.P50, "CPU should still be recorded")
+}

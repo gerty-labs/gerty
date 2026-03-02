@@ -330,3 +330,88 @@ func TestAggregator_ConcurrentIngestion(t *testing.T) {
 	assert.Len(t, report.Namespaces["ns"].Pods, 1)
 	assert.Equal(t, "pod-from-goroutine", report.Namespaces["ns"].Pods[0].PodName)
 }
+
+func TestMergeContainerWaste_ZeroCPURequest(t *testing.T) {
+	dst := &models.ContainerWaste{
+		ContainerName:    "main",
+		CPURequestMillis: 0, // zero request — no division by zero
+		CPUWasteMillis:   100,
+		CPUUsage:         models.MetricAggregate{P50: 50, P95: 80, P99: 90, Max: 100},
+	}
+	src := models.ContainerWaste{
+		ContainerName:  "main",
+		CPUWasteMillis: 200,
+		CPUUsage:       models.MetricAggregate{P50: 60, P95: 90, P99: 95, Max: 110},
+	}
+
+	mergeContainerWaste(dst, src, 2)
+
+	assert.Equal(t, float64(300), dst.CPUWasteMillis)
+	assert.Equal(t, float64(0), dst.CPUWastePercent, "zero request → zero percent (no div by zero)")
+	// CPU usage merged conservatively (max)
+	assert.Equal(t, float64(60), dst.CPUUsage.P50)
+	assert.Equal(t, float64(110), dst.CPUUsage.Max)
+}
+
+func TestMergeContainerWaste_ZeroMemoryRequest(t *testing.T) {
+	dst := &models.ContainerWaste{
+		ContainerName:      "main",
+		MemoryRequestBytes: 0, // zero request
+		MemWasteBytes:      100_000,
+		MemoryUsage:        models.MetricAggregate{P50: 50_000, P95: 80_000, P99: 90_000, Max: 100_000},
+	}
+	src := models.ContainerWaste{
+		ContainerName: "main",
+		MemWasteBytes: 200_000,
+		MemoryUsage:   models.MetricAggregate{P50: 60_000, P95: 90_000, P99: 95_000, Max: 110_000},
+	}
+
+	mergeContainerWaste(dst, src, 2)
+
+	assert.Equal(t, float64(300_000), dst.MemWasteBytes)
+	assert.Equal(t, float64(0), dst.MemWastePercent, "zero request → zero percent (no div by zero)")
+}
+
+func TestMergeContainerWaste_RestartCountKeepsHigher(t *testing.T) {
+	dst := &models.ContainerWaste{
+		ContainerName: "main",
+		RestartCount:  5,
+	}
+	src := models.ContainerWaste{
+		ContainerName: "main",
+		RestartCount:  3,
+	}
+
+	mergeContainerWaste(dst, src, 2)
+	assert.Equal(t, int32(5), dst.RestartCount, "should keep higher restart count")
+
+	// Now merge with a higher src.
+	src2 := models.ContainerWaste{
+		ContainerName: "main",
+		RestartCount:  10,
+	}
+	mergeContainerWaste(dst, src2, 3)
+	assert.Equal(t, int32(10), dst.RestartCount, "should adopt higher restart count from src")
+}
+
+func TestMergeContainerWaste_DataWindowKeepsLonger(t *testing.T) {
+	dst := &models.ContainerWaste{
+		ContainerName: "main",
+		DataWindow:    24 * time.Hour,
+	}
+	src := models.ContainerWaste{
+		ContainerName: "main",
+		DataWindow:    12 * time.Hour,
+	}
+
+	mergeContainerWaste(dst, src, 2)
+	assert.Equal(t, 24*time.Hour, dst.DataWindow, "should keep longer data window")
+
+	// Now merge with a longer src.
+	src2 := models.ContainerWaste{
+		ContainerName: "main",
+		DataWindow:    48 * time.Hour,
+	}
+	mergeContainerWaste(dst, src2, 3)
+	assert.Equal(t, 48*time.Hour, dst.DataWindow, "should adopt longer data window from src")
+}

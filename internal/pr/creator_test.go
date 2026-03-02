@@ -467,3 +467,104 @@ func TestFormatMemory(t *testing.T) {
 		assert.Equal(t, tt.want, formatMemory(tt.bytes))
 	}
 }
+
+func TestFetchRecommendation_Non200Status(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	runner := newMockRunner()
+	p := NewPRCreator(runner, server.URL)
+	_, err := p.fetchRecommendation(context.Background(), "production", "Deployment", "api-gateway")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decoding response")
+}
+
+func TestFetchRecommendation_MalformedJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<html>Not JSON</html>"))
+	}))
+	defer server.Close()
+
+	runner := newMockRunner()
+	p := NewPRCreator(runner, server.URL)
+	_, err := p.fetchRecommendation(context.Background(), "production", "Deployment", "api-gateway")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decoding response")
+}
+
+func TestFetchRecommendation_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := models.NewErrorResponse("analysis failed")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	runner := newMockRunner()
+	p := NewPRCreator(runner, server.URL)
+	_, err := p.fetchRecommendation(context.Background(), "production", "Deployment", "api-gateway")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "server error")
+	assert.Contains(t, err.Error(), "analysis failed")
+}
+
+func TestFetchRecommendation_EmptyList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := models.NewOKResponse([]models.Recommendation{})
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	runner := newMockRunner()
+	p := NewPRCreator(runner, server.URL)
+	_, err := p.fetchRecommendation(context.Background(), "production", "Deployment", "api-gateway")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no recommendation found")
+}
+
+func TestModifyValuesFile_NoMatchingValues(t *testing.T) {
+	content := `replicaCount: 3
+image:
+  repository: nginx
+  tag: latest
+`
+	rec := &models.Recommendation{
+		Resource:       "cpu",
+		RecommendedReq: 250,
+	}
+
+	_, err := modifyValuesFile(content, "resources.requests.cpu", rec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no resource values found")
+}
+
+func TestModifyManifestFile_QuotedValues(t *testing.T) {
+	content := `apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: api
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+`
+	rec := &models.Recommendation{
+		Resource:         "cpu",
+		RecommendedReq:   250,
+		RecommendedLimit: 500,
+	}
+
+	result, err := modifyManifestFile(content, rec)
+	require.NoError(t, err)
+	assert.Contains(t, result, "cpu: 250m")
+	assert.Contains(t, result, "cpu: 500m")
+	assert.Contains(t, result, `memory: "512Mi"`) // Unchanged.
+}

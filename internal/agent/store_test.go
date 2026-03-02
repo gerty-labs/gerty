@@ -296,3 +296,146 @@ func TestContainerKey(t *testing.T) {
 	assert.Equal(t, "default/nginx/container", models.ContainerKey("default", "nginx", "container"))
 	assert.Equal(t, "production/api-server/main", models.ContainerKey("production", "api-server", "main"))
 }
+
+func TestMergeBuckets_SingleBucket(t *testing.T) {
+	start := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	b := bucket{
+		start:       start,
+		end:         start.Add(fineGranularity),
+		granularity: fineGranularity,
+		sampleCount: 10,
+		cpuNanoCores: models.MetricAggregate{P50: 100, P95: 200, P99: 300, Max: 400},
+	}
+
+	merged := mergeBuckets([]bucket{b}, start, coarseGranularity)
+
+	// Single bucket: values pass through, times re-stamped.
+	assert.Equal(t, start, merged.start)
+	assert.Equal(t, start.Add(coarseGranularity), merged.end)
+	assert.Equal(t, coarseGranularity, merged.granularity)
+	assert.Equal(t, 10, merged.sampleCount)
+	assert.Equal(t, float64(100), merged.cpuNanoCores.P50)
+	assert.Equal(t, float64(400), merged.cpuNanoCores.Max)
+}
+
+func TestMergeBuckets_TwoBuckets(t *testing.T) {
+	start := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	b1 := bucket{
+		start:        start,
+		end:          start.Add(fineGranularity),
+		granularity:  fineGranularity,
+		sampleCount:  10,
+		cpuNanoCores: models.MetricAggregate{P50: 100, P95: 200, P99: 300, Max: 400},
+	}
+	b2 := bucket{
+		start:        start.Add(fineGranularity),
+		end:          start.Add(2 * fineGranularity),
+		granularity:  fineGranularity,
+		sampleCount:  10,
+		cpuNanoCores: models.MetricAggregate{P50: 200, P95: 400, P99: 500, Max: 600},
+	}
+
+	merged := mergeBuckets([]bucket{b1, b2}, start, coarseGranularity)
+
+	assert.Equal(t, 20, merged.sampleCount)
+	// P50 is weighted average: (100*10 + 200*10) / 20 = 150
+	assert.InDelta(t, 150, merged.cpuNanoCores.P50, 0.01)
+	// P95, P99 are conservative max
+	assert.Equal(t, float64(400), merged.cpuNanoCores.P95)
+	assert.Equal(t, float64(500), merged.cpuNanoCores.P99)
+	// Max is max
+	assert.Equal(t, float64(600), merged.cpuNanoCores.Max)
+}
+
+func TestMergeBuckets_ThreeBuckets(t *testing.T) {
+	start := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	buckets := []bucket{
+		{sampleCount: 5, cpuNanoCores: models.MetricAggregate{P50: 100, P95: 200, P99: 300, Max: 400}},
+		{sampleCount: 5, cpuNanoCores: models.MetricAggregate{P50: 200, P95: 300, P99: 400, Max: 500}},
+		{sampleCount: 10, cpuNanoCores: models.MetricAggregate{P50: 300, P95: 250, P99: 350, Max: 450}},
+	}
+
+	merged := mergeBuckets(buckets, start, coarseGranularity)
+
+	assert.Equal(t, 20, merged.sampleCount)
+	// After merge: result is stable (no panic, correct total count)
+	assert.Greater(t, merged.cpuNanoCores.P50, float64(0))
+	assert.Equal(t, float64(500), merged.cpuNanoCores.Max)
+}
+
+func TestGetAggregates_EmptyStore(t *testing.T) {
+	store := NewStore()
+	aggs := store.GetAggregates()
+	assert.Empty(t, aggs)
+}
+
+func TestGetAggregates_WithSamples(t *testing.T) {
+	store := NewStore()
+
+	store.Record(models.ContainerMetrics{
+		PodName:           "pod1",
+		PodNamespace:      "ns1",
+		ContainerName:     "c1",
+		Timestamp:         time.Now(),
+		CPUUsageNanoCores: 100_000_000,
+	})
+	store.Record(models.ContainerMetrics{
+		PodName:           "pod2",
+		PodNamespace:      "ns2",
+		ContainerName:     "c2",
+		Timestamp:         time.Now(),
+		CPUUsageNanoCores: 200_000_000,
+	})
+
+	aggs := store.GetAggregates()
+	assert.Len(t, aggs, 2)
+	assert.Contains(t, aggs, "ns1/pod1/c1")
+	assert.Contains(t, aggs, "ns2/pod2/c2")
+
+	// Each container should have at least one aggregated entry (live bucket).
+	assert.Greater(t, len(aggs["ns1/pod1/c1"]), 0)
+}
+
+func TestComputeAggregate_SingleValue(t *testing.T) {
+	agg := computeAggregate([]float64{42})
+	assert.Equal(t, float64(42), agg.P50)
+	assert.Equal(t, float64(42), agg.P95)
+	assert.Equal(t, float64(42), agg.P99)
+	assert.Equal(t, float64(42), agg.Max)
+}
+
+func TestComputeAggregate_Empty(t *testing.T) {
+	agg := computeAggregate([]float64{})
+	assert.Equal(t, float64(0), agg.P50)
+	assert.Equal(t, float64(0), agg.P95)
+	assert.Equal(t, float64(0), agg.P99)
+	assert.Equal(t, float64(0), agg.Max)
+}
+
+func TestPercentile_P0(t *testing.T) {
+	sorted := []float64{10, 20, 30, 40, 50}
+	// p=0.0: ceil(0*5)-1 = -1, clamped to 0 → first element
+	got := percentile(sorted, 0.0)
+	assert.Equal(t, float64(10), got)
+}
+
+func TestPercentile_P1(t *testing.T) {
+	sorted := []float64{10, 20, 30, 40, 50}
+	// p=1.0: ceil(1.0*5)-1 = 4 → last element
+	got := percentile(sorted, 1.0)
+	assert.Equal(t, float64(50), got)
+}
+
+func TestPercentile_HundredValues(t *testing.T) {
+	sorted := make([]float64, 100)
+	for i := range sorted {
+		sorted[i] = float64(i + 1) // 1, 2, ..., 100
+	}
+
+	// Nearest-rank: P50 = ceil(0.50*100)-1 = 49 → value 50
+	assert.Equal(t, float64(50), percentile(sorted, 0.50))
+	// P95 = ceil(0.95*100)-1 = 94 → value 95
+	assert.Equal(t, float64(95), percentile(sorted, 0.95))
+	// P99 = ceil(0.99*100)-1 = 98 → value 99
+	assert.Equal(t, float64(99), percentile(sorted, 0.99))
+}
