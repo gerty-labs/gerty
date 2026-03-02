@@ -36,7 +36,7 @@ Kubernetes resource efficiency platform. Lightweight in-cluster agents collect m
 
 **Server** aggregates reports cluster-wide, groups by owner (Deployment, StatefulSet, etc.), and runs the rules engine. Classifies workloads as steady, burstable, batch, idle, or anomalous, then generates right-sizing recommendations with confidence scores and risk levels.
 
-**CLI** queries the server API. Subcommands: `report`, `recommend`, `workloads`, `annotate`, `discover`.
+**CLI** queries the server API. Subcommands: `report`, `recommend`, `workloads`, `annotate`, `discover`, `pr`.
 
 **Slack notifier** (optional) sends periodic digest messages with grouped recommendations to a webhook. Configurable severity filter and 7-day dedup.
 
@@ -66,6 +66,8 @@ sage annotate deployment/api \           # Set GitOps source annotations
   --repo github.com/acme/manifests \
   --path apps/api/values.yaml
 sage discover                            # Auto-detect ArgoCD/Flux mappings
+sage pr deployment/api-gateway           # Create right-sizing PR
+sage pr deployment/api -n prod --dry-run # Preview without creating PR
 sage report -o json                      # JSON output
 ```
 
@@ -128,7 +130,7 @@ k8s-sage/
 ├── cmd/
 │   ├── agent/              # DaemonSet entrypoint
 │   ├── server/             # Server entrypoint
-│   └── cli/                # CLI (report, recommend, workloads, annotate, discover)
+│   └── cli/                # CLI (report, recommend, workloads, annotate, discover, pr)
 ├── internal/
 │   ├── agent/              # Collector, store, reporter, pusher
 │   ├── server/             # Aggregator, API, analyzer
@@ -136,7 +138,8 @@ k8s-sage/
 │   ├── models/             # Shared types
 │   ├── slm/                # SLM client (llama.cpp)
 │   ├── slack/              # Slack webhook notifier
-│   └── gitops/             # ArgoCD + Flux discovery
+│   ├── gitops/             # ArgoCD + Flux discovery
+│   └── pr/                 # PR creation (gh CLI + kubectl)
 ├── ml/
 │   ├── dataset/            # Training data (6,982 pairs) + generators
 │   ├── training/           # QLoRA fine-tuning, eval, merge/quantise
@@ -147,6 +150,7 @@ k8s-sage/
 ├── test/
 │   ├── backtest/           # 52 scenario regression tests
 │   ├── safety/             # Safety invariant tests
+│   ├── scale/              # Scale tests (20-1000 nodes)
 │   ├── integration/        # E2E tests
 │   └── dogfood/            # 8 workload archetypes + validation
 ├── scripts/                # Dev + training scripts
@@ -166,6 +170,7 @@ make dev-cluster      # kind cluster
 make dev-deploy       # Helm install to kind
 make backtest         # 52 scenario regression tests
 make test-safety      # Safety invariant tests
+make test-scale       # Scale tests (20-1000 nodes)
 make test-integration # E2E (requires running cluster)
 ```
 

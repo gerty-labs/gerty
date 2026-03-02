@@ -154,6 +154,26 @@ Check:
 
 ---
 
+## 8.5. Scale Test
+
+Run before dogfood v2 to establish baseline performance:
+
+```bash
+make test-scale
+```
+
+Check:
+- [ ] All scale points up to 100 nodes complete without drops
+- [ ] L1 full cycle (ingest + report + analyze) < 10s at 100 nodes
+- [ ] L2 estimated cycle time documented (owners x 4s) — note where it exceeds 5-min budget
+- [ ] Ingest latency < 1s per node report at 200 nodes
+- [ ] Report build < 500ms at 200 nodes
+- [ ] Memory stays under 512MB at 200 nodes
+- [ ] Graceful degradation at 500+ nodes (logged capacity warnings)
+- [ ] Replica guidance table produced with clear thresholds
+
+---
+
 ## 9. Dogfood v3 — With L2 (SLM)
 
 Copy the GGUF model into the cluster and enable L2:

@@ -75,7 +75,7 @@ k8s-sage/
 ├── cmd/
 │   ├── agent/main.go              # DaemonSet entrypoint
 │   ├── server/main.go             # Server entrypoint (+ Slack notifier bootstrap)
-│   └── cli/                       # CLI: report, recommend, workloads, annotate, discover
+│   └── cli/                       # CLI: report, recommend, workloads, annotate, discover, pr
 │
 ├── internal/
 │   ├── agent/                     # Collector, store, reporter, pusher
@@ -93,6 +93,7 @@ k8s-sage/
 │   │   └── parser.go              # JSON response parsing + validation
 │   ├── slack/                     # Slack webhook notifier + Block Kit messages
 │   ├── gitops/                    # ArgoCD + Flux workload discovery
+│   ├── pr/                        # PR creation (gh CLI + kubectl)
 │   └── models/                    # Shared types (metrics, reports, recommendations)
 │
 ├── ml/
@@ -123,6 +124,7 @@ k8s-sage/
 │   ├── backtest/                  # 52 scenario regression tests
 │   ├── safety/                    # 8 safety invariant tests
 │   ├── integration/               # End-to-end tests
+│   ├── scale/                     # Scale tests (20-1000 nodes)
 │   ├── dogfood/                   # 8 workload archetypes + validation
 │   └── fixtures/                  # Backtest scenarios JSON
 │
@@ -174,6 +176,7 @@ make lint-helm        # helm lint deploy/helm/k8s-sage/
 make docker-build     # Build container images
 make dev-cluster      # Spin up kind cluster
 make dev-deploy       # Deploy to kind via Helm
+make test-scale       # Scale tests (20-1000 nodes)
 make test-integration # Requires running cluster
 ```
 
@@ -205,18 +208,21 @@ The curated K8s efficiency dataset doesn't exist anywhere. Sources include: K8s 
 - Dogfood workloads (8 archetypes) with validation scripts
 - CI: ruff + helm lint in pipeline; Makefile lint-python/lint-helm targets
 - Grafana dashboard (Infinity datasource) + Helm ConfigMap
-- `sage annotate` + `sage discover` CLI subcommands
+- `sage annotate` + `sage discover` + `sage pr` CLI subcommands
 - Slack notifier scaffold (webhook, Block Kit, severity/dedup)
 - GitOps discovery (ArgoCD + Flux)
+- PR creation flow (`sage pr` — gh CLI + kubectl, dry-run support)
+- Scale testing framework (20-1000 nodes, application-layer simulation)
 - Models package tests (30 functions)
 
 ### Next: Training on GPU rig
 - `./scripts/train.sh` — fine-tune Jamba 3B (3-6h on dual 3090)
 - `./scripts/eval_and_deploy.sh` — merge, quantise, evaluate
+- Run `make test-scale` to establish performance baselines
 - Dogfood v2 (L1) and v3 (with L2)
 
 ### Remaining
-- PR creation flow, KWOK scale testing, marketplace listing
+- Marketplace listing
 
 ## Context for Claude Code
 
