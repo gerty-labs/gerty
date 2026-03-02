@@ -28,10 +28,10 @@ MAX_SYNTHETIC_RATIO = 0.15
 # Input files to merge (relative to project root).
 INPUT_FILES = [
     "ml/dataset/examples/expert_pairs.jsonl",
-    "ml/dataset/data/k8s_docs.jsonl",
-    "ml/dataset/data/gh_issues.jsonl",
-    "ml/dataset/data/so_pairs.jsonl",
-    "ml/dataset/data/synthetic.jsonl",
+    "ml/dataset/raw/k8s_docs_pairs.jsonl",
+    "ml/dataset/raw/github_issues_pairs.jsonl",
+    "ml/dataset/raw/stackoverflow_filtered.jsonl",
+    "ml/dataset/raw/vpa_source_pairs.jsonl",
 ]
 
 
