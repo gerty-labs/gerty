@@ -54,8 +54,11 @@ func main() {
 	})
 
 	server := &http.Server{
-		Addr:    ":9101",
-		Handler: mux,
+		Addr:         ":9101",
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

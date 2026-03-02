@@ -55,6 +55,13 @@ Annotations set:
 				return fmt.Errorf("--path is required")
 			}
 
+			// Reject values that could be misinterpreted as kubectl flags.
+			for _, v := range []string{repo, path, field} {
+				if strings.HasPrefix(v, "-") {
+					return fmt.Errorf("flag values must not start with '-' (got %q)", v)
+				}
+			}
+
 			annotations := []string{
 				fmt.Sprintf("sage.io/repo=%s", repo),
 				fmt.Sprintf("sage.io/path=%s", path),

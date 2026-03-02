@@ -208,7 +208,8 @@ func (p *PRCreator) fetchRecommendation(ctx context.Context, namespace, kind, na
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	const maxResponseBytes = 10 * 1024 * 1024 // 10MB
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
@@ -275,6 +276,9 @@ func (p *PRCreator) modifyResourceFile(filePath string, annotations *Annotations
 }
 
 // modifyManifestFile updates CPU/memory values in a standard K8s manifest.
+// Known limitations: assumes 2-space indentation, single container per manifest,
+// and standard requests:/limits: block structure. Multi-container pods or
+// non-standard formatting may require manual adjustment after PR creation.
 func modifyManifestFile(content string, rec *models.Recommendation) (string, error) {
 	result := content
 
@@ -297,7 +301,11 @@ func modifyManifestFile(content string, rec *models.Recommendation) (string, err
 	return result, nil
 }
 
-// modifyValuesFile updates resources in a Helm values.yaml using the field annotation as guidance.
+// modifyValuesFile updates resources in a Helm values.yaml. The fieldPath annotation
+// guides which section to target but the current implementation uses the same
+// line-based replacement as modifyManifestFile. Known limitations: assumes a flat
+// resources block with 2-space indentation. Deeply nested or templated values files
+// may require manual adjustment after PR creation.
 func modifyValuesFile(content string, fieldPath string, rec *models.Recommendation) (string, error) {
 	result := content
 

@@ -101,5 +101,7 @@ func main() {
 
 	slog.Info("shutting down sage-server")
 	close(done)
-	srv.Close()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	srv.Shutdown(shutdownCtx)
 }

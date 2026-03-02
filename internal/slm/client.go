@@ -60,7 +60,8 @@ func (c *Client) Complete(ctx context.Context, req CompletionRequest) (string, e
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	const maxResponseBytes = 1 * 1024 * 1024 // 1MB
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return "", fmt.Errorf("reading SLM response: %w", err)
 	}

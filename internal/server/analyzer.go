@@ -133,13 +133,23 @@ func checkSafetyInvariants(output *slm.SLMOutput, input rules.AnalysisInput) []s
 func mergeL2Result(l1 rules.AnalysisResult, l2 *slm.SLMOutput, input rules.AnalysisInput) rules.AnalysisResult {
 	result := l1
 
+	// Deep copy pointer fields to avoid mutating the original L1 result.
+	if l1.CPURecommendation != nil {
+		cpuCopy := *l1.CPURecommendation
+		result.CPURecommendation = &cpuCopy
+	}
+	if l1.MemRecommendation != nil {
+		memCopy := *l1.MemRecommendation
+		result.MemRecommendation = &memCopy
+	}
+
 	// Map SLM pattern to model pattern
 	if l2.Pattern != "" {
 		result.Pattern = patternFromString(l2.Pattern)
 	}
 
 	// Merge CPU recommendation
-	if l1.CPURecommendation != nil {
+	if result.CPURecommendation != nil {
 		cpuReq, err := slm.ParseResourceMillis(l2.CPURequest)
 		if err == nil {
 			cpuLim, _ := slm.ParseResourceMillis(l2.CPULimit)
@@ -164,7 +174,7 @@ func mergeL2Result(l1 rules.AnalysisResult, l2 *slm.SLMOutput, input rules.Analy
 	}
 
 	// Merge memory recommendation
-	if l1.MemRecommendation != nil {
+	if result.MemRecommendation != nil {
 		memReq, err := slm.ParseResourceBytes(l2.MemoryRequest)
 		if err == nil {
 			memLim, _ := slm.ParseResourceBytes(l2.MemoryLimit)

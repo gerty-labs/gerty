@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -35,9 +36,14 @@ func (c *Client) apiGet(path string, target interface{}) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode >= 500 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+	}
+
 	var envelope models.APIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		return fmt.Errorf("failed to decode response: %w", err)
+		return fmt.Errorf("failed to decode response (status %d): %w", resp.StatusCode, err)
 	}
 
 	if envelope.Status == "error" {

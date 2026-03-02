@@ -111,6 +111,9 @@ func (n *Notifier) sendDigest(ctx context.Context) error {
 		n.markSeen(key, now)
 	}
 
+	// Prune stale entries from the dedup map.
+	n.pruneSeen(now)
+
 	if len(filtered) == 0 {
 		slog.Debug("slack notifier: all recommendations filtered or deduped")
 		return nil
@@ -140,6 +143,17 @@ func (n *Notifier) markSeen(key string, now time.Time) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.seen[key] = now
+}
+
+// pruneSeen removes entries older than the dedup window to prevent unbounded growth.
+func (n *Notifier) pruneSeen(now time.Time) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for key, ts := range n.seen {
+		if now.Sub(ts) > dedupWindow {
+			delete(n.seen, key)
+		}
+	}
 }
 
 // meetsMinSeverity returns true if severity meets the minimum threshold.

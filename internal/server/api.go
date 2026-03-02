@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -66,14 +67,18 @@ func (api *API) RegisterRoutes(mux *http.ServeMux) {
 func writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(models.NewOKResponse(data))
+	if err := json.NewEncoder(w).Encode(models.NewOKResponse(data)); err != nil {
+		slog.Error("failed to encode JSON response", "error", err)
+	}
 }
 
 // writeError writes an error response wrapped in the APIResponse envelope.
 func writeError(w http.ResponseWriter, statusCode int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(models.NewErrorResponse(msg))
+	if err := json.NewEncoder(w).Encode(models.NewErrorResponse(msg)); err != nil {
+		slog.Error("failed to encode error response", "error", err)
+	}
 }
 
 // statusWriter wraps http.ResponseWriter to capture the status code for logging.
@@ -132,7 +137,8 @@ func (api *API) HandleIngest(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		if err.Error() == "http: request body too large" {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
 			slog.Warn("ingest payload too large", "remoteAddr", r.RemoteAddr)
 			writeError(w, http.StatusRequestEntityTooLarge, "payload too large")
 			return
@@ -300,6 +306,7 @@ func (api *API) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxIngestBodyBytes)
 	var req analyzeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %s", err.Error()))
