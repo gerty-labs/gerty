@@ -226,3 +226,109 @@ func mustJSON(t *testing.T, v interface{}) string {
 	require.NoError(t, err)
 	return string(data)
 }
+
+func TestPatternFromString(t *testing.T) {
+	tests := []struct {
+		input string
+		want  models.WorkloadPattern
+	}{
+		{"steady", models.PatternSteady},
+		{"burstable", models.PatternBurstable},
+		{"batch", models.PatternBatch},
+		{"idle", models.PatternIdle},
+		{"anomalous", models.PatternAnomalous},
+		{"", models.PatternSteady},       // default
+		{"unknown", models.PatternSteady}, // default
+		{"STEADY", models.PatternSteady},  // case-sensitive, falls to default
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := patternFromString(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestRiskFromString(t *testing.T) {
+	tests := []struct {
+		input string
+		want  models.RiskLevel
+	}{
+		{"LOW", models.RiskLow},
+		{"MEDIUM", models.RiskMedium},
+		{"HIGH", models.RiskHigh},
+		{"", models.RiskMedium},       // default
+		{"low", models.RiskMedium},    // case-sensitive, falls to default
+		{"EXTREME", models.RiskMedium}, // unknown, falls to default
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := riskFromString(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestCheckSafetyInvariants_InvalidCPUParse(t *testing.T) {
+	output := &slm.SLMOutput{
+		CPURequest:    "not_a_number",
+		MemoryRequest: "300Mi",
+	}
+	input := testInput()
+
+	violations := checkSafetyInvariants(output, input)
+	require.NotEmpty(t, violations)
+	assert.Contains(t, violations[0], "invalid cpu_request")
+}
+
+func TestCheckSafetyInvariants_InvalidMemoryParse(t *testing.T) {
+	output := &slm.SLMOutput{
+		CPURequest:    "300m",
+		MemoryRequest: "bogus",
+	}
+	input := testInput()
+
+	violations := checkSafetyInvariants(output, input)
+	require.NotEmpty(t, violations)
+	assert.Contains(t, violations[0], "invalid memory_request")
+}
+
+func TestCheckSafetyInvariants_MultipleViolations(t *testing.T) {
+	output := &slm.SLMOutput{
+		CPURequest:    "0m",
+		MemoryRequest: "0",
+	}
+	input := testInput()
+
+	violations := checkSafetyInvariants(output, input)
+	// Both CPU and memory are zero → at least 2 violations.
+	assert.GreaterOrEqual(t, len(violations), 2)
+}
+
+func TestCheckSafetyInvariants_ExactBoundary(t *testing.T) {
+	input := testInput()
+	// CPU floor = P95 (180) × 1.10 = 198
+	// Memory floor = P99 (220Mi) × 1.10 = 242Mi
+	output := &slm.SLMOutput{
+		CPURequest:    "198m",
+		MemoryRequest: "242Mi",
+	}
+
+	violations := checkSafetyInvariants(output, input)
+	assert.Empty(t, violations, "values exactly at floor should pass")
+}
+
+func TestCheckSafetyInvariants_NegativeValues(t *testing.T) {
+	output := &slm.SLMOutput{
+		CPURequest:    "-50m",
+		MemoryRequest: "300Mi",
+	}
+	input := testInput()
+
+	violations := checkSafetyInvariants(output, input)
+	require.NotEmpty(t, violations)
+	// -50m parses as -50, which is <= 0
+	assert.Contains(t, violations[0], "zero or negative")
+}
