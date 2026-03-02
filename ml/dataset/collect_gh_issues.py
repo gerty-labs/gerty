@@ -498,8 +498,9 @@ def collect_all(output_path: Path, verbose: bool = False) -> None:
     unique_pairs = []
     content_hashes: set[str] = set()
     for pair in all_pairs:
-        h = hashlib.md5(
-            (pair.user + pair.assistant).encode()
+        h = hashlib.md5(  # noqa: S324 — used for dedup, not security
+            (pair.user + pair.assistant).encode(),
+            usedforsecurity=False,
         ).hexdigest()
         if h not in content_hashes:
             content_hashes.add(h)

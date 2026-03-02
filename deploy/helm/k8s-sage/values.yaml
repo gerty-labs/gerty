@@ -72,6 +72,10 @@ grafana:
   dashboards:
     enabled: false
 
+networkPolicy:
+  enabled: true
+  allowExternalIngress: true
+
 slack:
   enabled: false
   webhookURL: ""

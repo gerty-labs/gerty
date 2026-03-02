@@ -15,6 +15,7 @@ spec:
         {{- include "k8s-sage.agent.selectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "k8s-sage.serviceAccountName" . }}
+      automountServiceAccountToken: true  # Agent needs SA token for kubelet access
       {{- with .Values.agent.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -23,6 +24,11 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: agent
           image: {{ include "k8s-sage.agent.image" . }}
@@ -65,6 +71,7 @@ spec:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
             runAsUser: 65534
+            runAsGroup: 65534
             allowPrivilegeEscalation: false
             capabilities:
               drop:

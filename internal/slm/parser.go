@@ -91,6 +91,16 @@ func ParseRecommendation(raw string) (*SLMOutput, error) {
 		return nil, fmt.Errorf("confidence %.2f out of range [0,1]", output.Confidence)
 	}
 
+	// Bound string field lengths to prevent abuse from malformed SLM output.
+	const maxExplanationLen = 1024
+	const maxReasoningCodeLen = 64
+	if len(output.Explanation) > maxExplanationLen {
+		output.Explanation = output.Explanation[:maxExplanationLen]
+	}
+	if len(output.ReasoningCode) > maxReasoningCodeLen {
+		output.ReasoningCode = output.ReasoningCode[:maxReasoningCodeLen]
+	}
+
 	return &output, nil
 }
 

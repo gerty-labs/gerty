@@ -66,7 +66,7 @@ func main() {
 			MinSeverity:    minSeverity,
 		}, aggregator, engine)
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background()) //nolint:govet // cancel called in goroutine on shutdown
 		go notifier.Run(ctx)
 		go func() {
 			<-done
@@ -103,5 +103,7 @@ func main() {
 	close(done)
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
-	srv.Shutdown(shutdownCtx)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("server shutdown error", "error", err)
+	}
 }

@@ -8,6 +8,8 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "nodes"]
     verbs: ["get", "list", "watch"]
+  # nodes/stats and nodes/proxy are required for agent to read kubelet metrics.
+  # KSV-0047: acknowledged — agent only uses GET for /stats/summary.
   - apiGroups: [""]
     resources: ["nodes/stats", "nodes/proxy"]
     verbs: ["get"]

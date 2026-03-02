@@ -83,5 +83,7 @@ func main() {
 	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-	server.Shutdown(shutdownCtx)
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		slog.Error("server shutdown error", "error", err)
+	}
 }

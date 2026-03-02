@@ -329,8 +329,10 @@ def main() -> None:
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         logger.info("Loading model from %s", args.model_path)
-        tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(args.model_path, trust_remote_code=True, device_map="auto")
+        tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 — local model path
+            args.model_path, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained(  # nosec B615 — local model path
+            args.model_path, trust_remote_code=True, device_map="auto")
         infer_fn = lambda prompt: infer_hf_model(model, tokenizer, prompt)
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)

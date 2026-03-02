@@ -20,6 +20,14 @@ const systemPrompt = `You are k8s-sage, a Kubernetes resource efficiency special
 
 Respond ONLY with the JSON object, no additional text.`
 
+// truncate limits a string to maxLen characters for safe prompt interpolation.
+func truncate(s string, maxLen int) string {
+	if len(s) > maxLen {
+		return s[:maxLen]
+	}
+	return s
+}
+
 // BuildPrompt constructs the full prompt for the SLM from workload data.
 // The format matches the instruction-tuning template used during training.
 func BuildPrompt(input rules.AnalysisInput) string {
@@ -29,10 +37,10 @@ func BuildPrompt(input rules.AnalysisInput) string {
 	b.WriteString(systemPrompt)
 	b.WriteString("\n<|user|>\n")
 
-	// Workload identification
+	// Workload identification — truncate to K8s max lengths for defense-in-depth.
 	fmt.Fprintf(&b, "Workload: %s/%s in namespace %s\n",
-		input.Owner.Kind, input.Owner.Name, input.Owner.Namespace)
-	fmt.Fprintf(&b, "Container: %s\n", input.ContainerName)
+		truncate(input.Owner.Kind, 63), truncate(input.Owner.Name, 253), truncate(input.Owner.Namespace, 63))
+	fmt.Fprintf(&b, "Container: %s\n", truncate(input.ContainerName, 63))
 
 	// CPU metrics
 	fmt.Fprintf(&b, "CPU: Request=%dm, Limit=%dm\n",

@@ -115,6 +115,18 @@ func (p *PRCreator) Create(ctx context.Context, opts Options) (*PRResult, error)
 
 	// Step 7: Modify YAML file.
 	filePath := filepath.Join(repoDir, annotations.Path)
+	// Prevent path traversal: ensure resolved path stays within the cloned repo.
+	absFilePath, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("resolving file path: %w", err)
+	}
+	absRepoDir, err := filepath.Abs(repoDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving repo dir: %w", err)
+	}
+	if !strings.HasPrefix(absFilePath, absRepoDir+string(filepath.Separator)) {
+		return nil, fmt.Errorf("path %q escapes repo directory", annotations.Path)
+	}
 	if err := p.modifyResourceFile(filePath, annotations, rec); err != nil {
 		return nil, fmt.Errorf("modifying %s: %w", annotations.Path, err)
 	}
@@ -254,7 +266,7 @@ func (p *PRCreator) fetchRecommendation(ctx context.Context, namespace, kind, na
 
 // modifyResourceFile updates resource requests/limits in the specified file.
 func (p *PRCreator) modifyResourceFile(filePath string, annotations *Annotations, rec *models.Recommendation) error {
-	content, err := os.ReadFile(filePath)
+	content, err := os.ReadFile(filePath) // #nosec G304 — path validated at call site (traversal check)
 	if err != nil {
 		return fmt.Errorf("reading file: %w", err)
 	}
@@ -272,7 +284,7 @@ func (p *PRCreator) modifyResourceFile(filePath string, annotations *Annotations
 		return err
 	}
 
-	return os.WriteFile(filePath, []byte(modified), 0644)
+	return os.WriteFile(filePath, []byte(modified), 0600) // #nosec G304 — path validated at call site
 }
 
 // modifyManifestFile updates CPU/memory values in a standard K8s manifest.
@@ -435,8 +447,8 @@ func FormatPRBody(rec *models.Recommendation, kind, name, namespace string) stri
 	b.WriteString(fmt.Sprintf("**Risk:** %s\n\n", rec.Risk))
 
 	b.WriteString("### Changes\n\n")
-	b.WriteString(fmt.Sprintf("| Resource | Current | Recommended |\n"))
-	b.WriteString(fmt.Sprintf("|----------|---------|-------------|\n"))
+	b.WriteString("| Resource | Current | Recommended |\n")
+	b.WriteString("|----------|---------|-------------|\n")
 
 	if rec.Resource == "cpu" {
 		b.WriteString(fmt.Sprintf("| CPU request | %s | %s |\n", formatCPU(rec.CurrentRequest), formatCPU(rec.RecommendedReq)))

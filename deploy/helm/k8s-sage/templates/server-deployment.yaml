@@ -24,6 +24,12 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: server
           image: {{ include "k8s-sage.server.image" . }}
@@ -72,6 +78,7 @@ spec:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
             runAsUser: 65534
+            runAsGroup: 65534
             allowPrivilegeEscalation: false
             capabilities:
               drop:

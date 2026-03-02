@@ -21,6 +21,12 @@ spec:
         app.kubernetes.io/component: slm
     spec:
       serviceAccountName: {{ include "k8s-sage.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: llama-cpp
           image: "{{ .Values.slm.image.repository }}:{{ .Values.slm.image.tag }}"
@@ -48,6 +54,15 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.slm.resources | nindent 12 }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           volumeMounts:
             - name: model-storage
               mountPath: /models
@@ -87,6 +102,8 @@ metadata:
     {{- include "k8s-sage.labels" . | nindent 4 }}
     app.kubernetes.io/component: slm
 spec:
+  # ReadWriteOnce used because ReadOnlyMany requires specific storage class support.
+  # The model file is read-only at runtime; the PVC is writable only for initial upload.
   accessModes:
     - ReadWriteOnce
   resources:

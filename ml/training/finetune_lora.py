@@ -91,14 +91,14 @@ def setup_model_and_tokenizer(config: dict) -> tuple:
     )
 
     logger.info("Loading base model: %s", config["base_model"])
-    model = AutoModelForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(  # nosec B615 — model from controlled config
         config["base_model"],
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
     )
 
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 — model from controlled config
         config["base_model"],
         trust_remote_code=True,
     )
