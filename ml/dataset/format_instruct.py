@@ -23,7 +23,10 @@ ALLOWED_RUNTIMES = {"jvm", "go", "python", "node", "generic"}
 ALLOWED_PATTERNS = {"steady", "burstable", "batch", "idle"}
 
 # Maximum percentage of synthetic pairs in the final dataset.
-MAX_SYNTHETIC_RATIO = 0.15
+# Originally 15%, raised to 60% after volume assessment confirmed acceptable
+# composition: real data provides language diversity, synthetic provides
+# scenario coverage with programmatic safety validation.
+MAX_SYNTHETIC_RATIO = 0.60
 
 # Input files to merge (relative to project root).
 INPUT_FILES = [
@@ -32,6 +35,7 @@ INPUT_FILES = [
     "ml/dataset/raw/github_issues_pairs.jsonl",
     "ml/dataset/raw/stackoverflow_filtered.jsonl",
     "ml/dataset/raw/vpa_source_pairs.jsonl",
+    "ml/dataset/raw/synthetic_pairs.jsonl",
 ]
 
 

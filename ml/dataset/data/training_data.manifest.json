@@ -1,0 +1,13 @@
+{
+  "total_pairs": 6982,
+  "sources": {
+    "expert": 169,
+    "k8s-docs": 289,
+    "github": 530,
+    "stackoverflow": 2405,
+    "vpa-source": 66,
+    "synthetic": 3523
+  },
+  "invalid_rejected": 1017,
+  "duplicates_removed": 0
+}
