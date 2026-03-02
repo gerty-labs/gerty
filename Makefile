@@ -1,4 +1,4 @@
-.PHONY: build test lint lint-python lint-helm clean docker-build dev-cluster dev-deploy test-integration backtest test-safety \
+.PHONY: build test lint lint-python lint-helm clean docker-build dev-cluster dev-deploy test-integration backtest test-safety test-scale \
 	dogfood setup-workloads generate-load validate validate-classifications validate-recommendations validate-savings teardown
 
 BINARY_DIR := bin
@@ -41,6 +41,9 @@ backtest:
 
 test-safety:
 	go test ./test/safety/... -v -count=1
+
+test-scale:
+	go test -v -count=1 -timeout 600s ./test/scale/...
 
 test-integration:
 	go test ./test/integration/... -v -tags=integration
