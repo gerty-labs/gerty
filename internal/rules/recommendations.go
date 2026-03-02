@@ -78,7 +78,23 @@ func GenerateCPURecommendation(
 	dataWindowMinutes float64,
 ) *models.Recommendation {
 	if currentReqMillis <= 0 {
-		return nil // Can't recommend without a current request
+		// Best-effort pod — recommend adding resource requests.
+		stats := ComputeWorkloadStats(cpuUsage, 0, dataWindowMinutes)
+		recReq := math.Max(cpuUsage.P95*headroomSteady, float64(minRecommendedCPUMillis))
+		recLimit := math.Max(cpuUsage.P99*headroomBurstableLimit, recReq)
+		confidence := computeConfidence(stats)
+		return &models.Recommendation{
+			Target: target, Container: containerName, Resource: "cpu",
+			CurrentRequest: 0, CurrentLimit: 0,
+			RecommendedReq:   int64(math.Ceil(recReq)),
+			RecommendedLimit: int64(math.Ceil(recLimit)),
+			Pattern: stats.Pattern, Confidence: confidence,
+			Reasoning: fmt.Sprintf("No CPU request set (BestEffort QoS). Pod is at risk of eviction. "+
+				"Based on observed P95=%.0fm, recommend adding %dm request.",
+				cpuUsage.P95, int64(math.Ceil(recReq))),
+			Risk:       models.RiskHigh,
+			DataWindow: time.Duration(dataWindowMinutes) * time.Minute,
+		}
 	}
 
 	stats := ComputeWorkloadStats(cpuUsage, currentReqMillis, dataWindowMinutes)
@@ -164,12 +180,40 @@ func GenerateCPURecommendation(
 
 	// Check if the recommendation actually reduces waste meaningfully.
 	savings := float64(currentReqMillis) - recReq
-	if savings <= 0 {
-		return nil // Already right-sized or under-provisioned
+	wastePercent := float64(0)
+	if currentReqMillis > 0 {
+		wastePercent = (savings / float64(currentReqMillis)) * 100
 	}
-	wastePercent := (savings / float64(currentReqMillis)) * 100
+
+	if savings <= 0 {
+		// Under-provisioned: workload may need MORE resources.
+		return &models.Recommendation{
+			Target: target, Container: containerName, Resource: "cpu",
+			CurrentRequest: currentReqMillis, CurrentLimit: currentLimitMillis,
+			RecommendedReq:   int64(math.Ceil(recReq)),
+			RecommendedLimit: int64(math.Ceil(recLimit)),
+			Pattern: stats.Pattern, Confidence: confidence,
+			Reasoning: fmt.Sprintf("Under-provisioned: current request %dm is below observed P95 %.0fm. "+
+				"Consider increasing to %dm.",
+				currentReqMillis, cpuUsage.P95, int64(math.Ceil(recReq))),
+			EstSavings: 0, Risk: models.RiskHigh,
+			DataWindow: time.Duration(dataWindowMinutes) * time.Minute,
+		}
+	}
+
 	if wastePercent < wasteThresholdPercent {
-		return nil // Not enough waste to warrant a recommendation
+		// Well-sized: within threshold, no changes recommended.
+		return &models.Recommendation{
+			Target: target, Container: containerName, Resource: "cpu",
+			CurrentRequest: currentReqMillis, CurrentLimit: currentLimitMillis,
+			RecommendedReq: currentReqMillis, RecommendedLimit: currentLimitMillis,
+			Pattern: stats.Pattern, Confidence: confidence,
+			Reasoning: fmt.Sprintf("Well-sized: current request %dm is within %.0f%% of observed P95 %.0fm. "+
+				"No changes recommended.",
+				currentReqMillis, wastePercent, cpuUsage.P95),
+			EstSavings: 0, Risk: models.RiskLow,
+			DataWindow: time.Duration(dataWindowMinutes) * time.Minute,
+		}
 	}
 
 	// Risk depends on pattern: for burst/batch patterns, the limit (not the
@@ -214,7 +258,23 @@ func GenerateMemoryRecommendation(
 	cpuPattern models.WorkloadPattern,
 ) *models.Recommendation {
 	if currentReqBytes <= 0 {
-		return nil
+		// Best-effort pod — recommend adding memory requests.
+		memStats := WorkloadStats{Pattern: cpuPattern, DataWindowMinutes: dataWindowMinutes}
+		recReq := math.Max(memUsage.P99*headroomSteady, float64(minRecommendedMemBytes))
+		recLimit := math.Max(memUsage.Max*headroomBurstableLimit, recReq)
+		confidence := computeConfidence(memStats) * 0.95
+		return &models.Recommendation{
+			Target: target, Container: containerName, Resource: "memory",
+			CurrentRequest: 0, CurrentLimit: 0,
+			RecommendedReq:   int64(math.Ceil(recReq)),
+			RecommendedLimit: int64(math.Ceil(recLimit)),
+			Pattern: cpuPattern, Confidence: math.Round(confidence*100) / 100,
+			Reasoning: fmt.Sprintf("No memory request set (BestEffort QoS). Pod is at risk of eviction. "+
+				"Based on observed P99=%.1fMi, recommend adding %.1fMi request.",
+				memUsage.P99/1048576, recReq/1048576),
+			Risk:       models.RiskHigh,
+			DataWindow: time.Duration(dataWindowMinutes) * time.Minute,
+		}
 	}
 
 	// Memory recommendations are more conservative — OOMKill is worse than
@@ -297,12 +357,40 @@ func GenerateMemoryRecommendation(
 	}
 
 	savings := float64(currentReqBytes) - recReq
-	if savings <= 0 {
-		return nil
+	wastePercent := float64(0)
+	if currentReqBytes > 0 {
+		wastePercent = (savings / float64(currentReqBytes)) * 100
 	}
-	wastePercent := (savings / float64(currentReqBytes)) * 100
+
+	if savings <= 0 {
+		// Under-provisioned memory.
+		return &models.Recommendation{
+			Target: target, Container: containerName, Resource: "memory",
+			CurrentRequest: currentReqBytes, CurrentLimit: currentLimitBytes,
+			RecommendedReq:   int64(math.Ceil(recReq)),
+			RecommendedLimit: int64(math.Ceil(recLimit)),
+			Pattern: cpuPattern, Confidence: math.Round(confidence*100) / 100,
+			Reasoning: fmt.Sprintf("Under-provisioned: current memory request %.1fMi is below observed P99 %.1fMi. "+
+				"Consider increasing to %.1fMi.",
+				float64(currentReqBytes)/1048576, memUsage.P99/1048576, recReq/1048576),
+			EstSavings: 0, Risk: models.RiskHigh,
+			DataWindow: time.Duration(dataWindowMinutes) * time.Minute,
+		}
+	}
+
 	if wastePercent < wasteThresholdPercent {
-		return nil
+		// Well-sized memory.
+		return &models.Recommendation{
+			Target: target, Container: containerName, Resource: "memory",
+			CurrentRequest: currentReqBytes, CurrentLimit: currentLimitBytes,
+			RecommendedReq: currentReqBytes, RecommendedLimit: currentLimitBytes,
+			Pattern: cpuPattern, Confidence: math.Round(confidence*100) / 100,
+			Reasoning: fmt.Sprintf("Well-sized: current memory request %.1fMi is within %.0f%% of observed P99 %.1fMi. "+
+				"No changes recommended.",
+				float64(currentReqBytes)/1048576, wastePercent, memUsage.P99/1048576),
+			EstSavings: 0, Risk: models.RiskLow,
+			DataWindow: time.Duration(dataWindowMinutes) * time.Minute,
+		}
 	}
 
 	risk := computeMemoryRisk(recReq, memUsage)

@@ -30,9 +30,11 @@ func TestEngine_Analyze_ClampNegativeValues(t *testing.T) {
 
 	// With everything clamped to zero, default pattern should be Steady.
 	assert.Equal(t, models.PatternSteady, result.Pattern)
-	// No recommendation because requests are zero.
-	assert.Nil(t, result.CPURecommendation)
-	assert.Nil(t, result.MemRecommendation)
+	// Requests are zero → BestEffort recommendations (not nil).
+	require.NotNil(t, result.CPURecommendation)
+	assert.Contains(t, result.CPURecommendation.Reasoning, "BestEffort")
+	require.NotNil(t, result.MemRecommendation)
+	assert.Contains(t, result.MemRecommendation.Reasoning, "BestEffort")
 }
 
 func TestEngine_Analyze_SteadyWithClearWaste(t *testing.T) {
@@ -126,8 +128,10 @@ func TestEngine_Analyze_NoWaste(t *testing.T) {
 
 	result := engine.Analyze(input)
 
-	// Usage is very close to request — no recommendation expected.
-	assert.Nil(t, result.CPURecommendation)
+	// Usage is very close to request — under-provisioned recommendation expected.
+	require.NotNil(t, result.CPURecommendation)
+	assert.Contains(t, result.CPURecommendation.Reasoning, "Under-provisioned")
+	assert.Equal(t, int64(0), result.CPURecommendation.EstSavings)
 }
 
 func TestEngine_AnalyzeCluster(t *testing.T) {

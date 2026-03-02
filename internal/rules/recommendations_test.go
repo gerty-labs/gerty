@@ -157,35 +157,44 @@ func TestGenerateCPURecommendation_IdleWorkload(t *testing.T) {
 	assertSafetyInvariant_CPU(t, rec, usage)
 }
 
-func TestGenerateCPURecommendation_ZeroRequest(t *testing.T) {
+func TestGenerateCPURecommendation_ZeroRequest_BestEffort(t *testing.T) {
 	usage := models.MetricAggregate{P50: 100, P95: 200, P99: 250, Max: 300}
 
 	rec := GenerateCPURecommendation(testOwner, "main", usage, 0, 0, 10080)
-	assert.Nil(t, rec, "should not recommend when current request is zero")
+	require.NotNil(t, rec, "best-effort pod should get a recommendation")
+	assert.Equal(t, models.RiskHigh, rec.Risk)
+	assert.Contains(t, rec.Reasoning, "BestEffort")
+	assert.Equal(t, int64(0), rec.CurrentRequest)
+	assert.Greater(t, rec.RecommendedReq, int64(0))
 }
 
-func TestGenerateCPURecommendation_NegativeRequest(t *testing.T) {
+func TestGenerateCPURecommendation_NegativeRequest_BestEffort(t *testing.T) {
 	usage := models.MetricAggregate{P50: 100, P95: 200, P99: 250, Max: 300}
 
 	rec := GenerateCPURecommendation(testOwner, "main", usage, -100, 0, 10080)
-	assert.Nil(t, rec, "should not recommend with negative request")
+	require.NotNil(t, rec, "negative request treated as best-effort")
+	assert.Contains(t, rec.Reasoning, "BestEffort")
 }
 
 func TestGenerateCPURecommendation_UsageExceedsRequest(t *testing.T) {
-	// P95 > request = workload is under-provisioned.
+	// P95 > request. Burstable: recReq = P50*1.20 = 960. Savings = 1000-960 = 40 (4% < 10% → well-sized).
 	usage := models.MetricAggregate{P50: 800, P95: 1200, P99: 1500, Max: 2000}
 
 	rec := GenerateCPURecommendation(testOwner, "main", usage, 1000, 2000, 10080)
-	assert.Nil(t, rec, "should not recommend when usage exceeds request")
+	require.NotNil(t, rec, "should get well-sized recommendation")
+	assert.Contains(t, rec.Reasoning, "Well-sized")
+	assert.Equal(t, int64(0), rec.EstSavings)
+	assert.Equal(t, models.RiskLow, rec.Risk)
 }
 
 func TestGenerateCPURecommendation_AlreadyRightSized(t *testing.T) {
 	// Waste < 10% -- below wasteThresholdPercent.
 	usage := models.MetricAggregate{P50: 400, P95: 450, P99: 470, Max: 490}
 
-	// Request = 500, P95 = 450, headroom = 540. Savings = 500 - 540 < 0.
+	// Request = 500, P95 = 450, headroom = 540. Savings = 500 - 540 < 0 → under-provisioned.
 	rec := GenerateCPURecommendation(testOwner, "main", usage, 500, 1000, 10080)
-	assert.Nil(t, rec, "should not recommend when already right-sized")
+	require.NotNil(t, rec, "under-provisioned workload should get recommendation")
+	assert.Equal(t, int64(0), rec.EstSavings)
 }
 
 func TestGenerateCPURecommendation_MinimumFloor(t *testing.T) {
@@ -269,14 +278,17 @@ func TestGenerateMemoryRecommendation_SteadyWorkload(t *testing.T) {
 	assertSafetyInvariant_Memory(t, rec, memUsage)
 }
 
-func TestGenerateMemoryRecommendation_ZeroRequest(t *testing.T) {
+func TestGenerateMemoryRecommendation_ZeroRequest_BestEffort(t *testing.T) {
 	memUsage := models.MetricAggregate{P50: 100, P95: 200, P99: 250, Max: 300}
 
 	rec := GenerateMemoryRecommendation(
 		testOwner, "main", memUsage,
 		0, 0, 10080, models.PatternSteady,
 	)
-	assert.Nil(t, rec)
+	require.NotNil(t, rec, "best-effort pod should get memory recommendation")
+	assert.Equal(t, models.RiskHigh, rec.Risk)
+	assert.Contains(t, rec.Reasoning, "BestEffort")
+	assert.Equal(t, int64(0), rec.CurrentRequest)
 }
 
 func TestGenerateMemoryRecommendation_MinimumFloor(t *testing.T) {
