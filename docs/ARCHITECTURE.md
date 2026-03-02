@@ -18,11 +18,13 @@ Existing solutions fall into two camps:
 
 1. **The tool must cost less than the waste it identifies.** If the agent uses 50MB per node and identifies 2GB of waste, that's a 40:1 return. If it uses 2GB itself, it's useless.
 
-2. **Work without AI, be better with AI.** The rules engine is the MVP. The SLM is a force multiplier. No cluster should require a model to get value from k8s-sage.
+2. **Work without AI, be better with AI.** The rules engine (L1) is the MVP. The SLM (L2) is a force multiplier. No cluster should require a model to get value from k8s-sage.
 
-3. **Data never leaves the cluster by default.** No external API calls. The model runs locally. Metrics stay in-cluster.
+3. **L1 is the safety floor.** The SLM can enhance recommendations but never override safety invariants enforced by the rules engine. If L2 fails, times out, or violates safety, L1 stands.
 
-4. **Opinionated defaults, configurable everything.** Sensible out-of-the-box behaviour, but every threshold and interval is tuneable.
+4. **Data never leaves the cluster by default.** No external API calls. The model runs locally. Metrics stay in-cluster.
+
+5. **Opinionated defaults, configurable everything.** Sensible out-of-the-box behaviour, but every threshold and interval is tuneable.
 
 ---
 
@@ -62,7 +64,7 @@ Age 0–24h:    5-minute aggregates (P50, P95, P99, max)
 Age 24h–7d:   1-hour aggregates
 ```
 
-Per-pod storage cost: ~500 data points × 6 metrics × ~40 bytes = ~120KB per pod.
+Per-pod storage cost: ~500 data points x 6 metrics x ~40 bytes = ~120KB per pod.
 At 50Mi budget with 15Mi for Go runtime/HTTP: supports ~290 pods per node.
 
 For dense nodes (>300 pods), reduce retention or increase memory limit via Helm values.
@@ -89,182 +91,173 @@ rules:
     verbs: ["get", "list"]
 ```
 
-The `nodes/stats` and `nodes/proxy` resources are required for the agent to access the kubelet `/stats/summary` and `/pods` endpoints via the API server proxy. No write access. No secrets access. Principle of least privilege.
+No write access. No secrets access. Principle of least privilege.
 
 ---
 
 ### 2. sage-server (Deployment)
 
-Central service that aggregates data from all agents, runs the rules engine, optionally invokes the SLM, and serves the API.
+Central service that aggregates data from all agents, runs the L1 rules engine, optionally invokes the L2 SLM, and serves the API.
 
 #### Aggregation
 
 The server maintains a cluster-wide view built from agent push reports. Data is keyed by `namespace/pod/container` with per-node provenance.
 
-```go
-type ClusterState struct {
-    Namespaces map[string]*NamespaceState
-    LastUpdate time.Time
-}
-
-type NamespaceState struct {
-    Pods       map[string]*PodState
-    TotalWaste ResourceWaste
-}
-
-type PodState struct {
-    Containers []ContainerState
-    Node       string
-    QoSClass   string
-    Labels     map[string]string
-    OwnerRef   OwnerReference  // Deployment, StatefulSet, DaemonSet, Job, etc.
-}
-
-type ContainerState struct {
-    Name       string
-    CPURequest resource.Quantity
-    CPUUsage   TimeSeriesSummary  // P50, P95, P99, max over window
-    MemRequest resource.Quantity
-    MemUsage   TimeSeriesSummary
-    Restarts   int
-}
-```
-
 #### Owner-Level Aggregation
 
-Recommendations are made at the owner level (Deployment, StatefulSet, etc.), not the pod level. If a Deployment has 10 replicas all showing the same waste pattern, we generate one recommendation for the Deployment, not 10 for individual pods.
+Recommendations are made at the owner level (Deployment, StatefulSet, etc.), not the pod level. If a Deployment has 10 replicas all showing the same waste pattern, we generate one recommendation for the Deployment, not 10 for individual pods. The highest resource usage across replicas drives the recommendation.
 
 ```
-Pod metrics → Group by ownerReference → Aggregate across replicas → Recommend
+Pod metrics -> Group by ownerReference -> Aggregate across replicas -> Recommend
 ```
 
 ---
 
-### 3. Rules Engine
+### 3. Rules Engine (L1)
 
-Deterministic logic that classifies workloads and generates right-sizing recommendations without any AI.
+Deterministic logic that classifies workloads and generates right-sizing recommendations without any AI. This is the safety-critical path — all recommendations must pass L1 invariants regardless of whether L2 is enabled.
 
 #### Workload Classification
 
-The rules engine classifies each workload into one of four patterns based on CPU/memory time series:
+The rules engine classifies each workload into one of five patterns:
 
 | Pattern | Characteristics | Right-sizing Strategy |
 |---------|----------------|----------------------|
-| **Steady** | Low variance, consistent usage | Set request to P95 + 20% headroom |
-| **Burstable** | Periodic spikes, low baseline | Set request to P50 + 20%, limit to P99 + 20% |
-| **Batch** | High usage during execution, idle otherwise | Set request to P50 + 20%, limit to Max + 20% |
+| **Steady** | Low variance, CV < 0.3 | Request = P95 x 1.20 headroom |
+| **Burstable** | Periodic spikes, moderate variance | Request = P50 x 1.20, Limit = P99 x 1.20 |
+| **Batch** | High amplitude spikes, idle between | Request = P50 x 1.20, Limit = Max x 1.20 |
 | **Idle** | <5% utilisation sustained over 48h+ | Flag for removal or investigation |
+| **Anomalous** | Monotonic memory growth, no release | Flag for investigation (possible memory leak) |
 
-Classification algorithm:
+#### Classification Algorithm
+
 ```
-coefficient_of_variation = stddev(cpu_usage) / mean(cpu_usage)
+# Near-zero guard: ratio math is unreliable when P50 is tiny
+IF P50 < 25m CPU AND Max < 100m CPU:
+    -> STEADY (low-usage daemon)
+IF P50 < 25m CPU AND Max >= 100m CPU:
+    -> BURSTABLE (low baseline, real spikes)
 
-if mean(cpu_usage) < 0.05 * cpu_request for >48h:
-    pattern = IDLE
-elif cv < 0.3:
-    pattern = STEADY
-elif P99/P50 >= 5 AND Max/P50 >= 10:
-    pattern = BATCH
-else:
-    pattern = BURSTABLE
+# Idle detection
+IF mean(cpu_usage) < 0.05 * cpu_request for >48h:
+    -> IDLE
+
+# Anomaly detection (memory only)
+IF memory usage is monotonically increasing across 4 time segments
+   AND growth from segment 1 -> segment 4 > 20%:
+    -> ANOMALOUS
+
+# Standard classification
+coefficient_of_variation = (P95 - P50) / P50
+IF cv < 0.3:
+    -> STEADY
+ELIF P99/P50 >= 5 AND Max/P50 >= 10:
+    -> BATCH
+ELSE:
+    -> BURSTABLE
 ```
 
-#### Recommendation Generation
+The near-zero P50 guard was added after dogfooding revealed that low-usage daemons (agents, CNI plugins, HTTP servers with <25m baseline) were being misclassified as batch due to ratio explosion when P50 approaches zero.
 
-Each recommendation includes:
-```go
-type Recommendation struct {
-    Target        OwnerReference        // What to change
-    Container     string                // Which container
-    Resource      string                // "cpu" or "memory"
-    CurrentReq    resource.Quantity      // Current request
-    CurrentLimit  resource.Quantity      // Current limit
-    RecommendedReq   resource.Quantity   // Suggested request
-    RecommendedLimit resource.Quantity   // Suggested limit
-    Pattern       WorkloadPattern       // Classification
-    Confidence    float64               // 0.0–1.0
-    Reasoning     string                // Human-readable explanation
-    EstSavings    ResourceSavings       // CPU cores and memory freed
-    Risk          RiskLevel             // LOW, MEDIUM, HIGH
-    DataWindow    time.Duration         // How much data this is based on
-}
-```
+#### Safety Invariants
+
+These are enforced on every recommendation, regardless of L1 or L2 origin:
+
+| Invariant | Value | Rationale |
+|-----------|-------|-----------|
+| CPU floor | 50m | No real container runs below this |
+| Memory floor | 64Mi | Minimum viable for any runtime |
+| Memory recommendation | >= P99 working set x 1.10 | Prevent OOM kills |
+| CPU recommendation | >= P95 x headroom | Prevent throttling |
+| No zero recommendations | Always enforced | Zero = eviction risk |
+
+When a recommendation hits the floor, the reasoning text explicitly notes "minimum floor applied".
+
+#### Confidence-Gated Reduction Caps
+
+No single recommendation can reduce resources by an unbounded amount. The maximum reduction per cycle is tied to confidence:
+
+| Confidence | Max Reduction |
+|------------|--------------|
+| < 0.5 | 30% |
+| 0.5 - 0.8 | 50% |
+| > 0.8 | 75% |
+
+This prevents cliff-drop recommendations (e.g., 1024Mi -> 13Mi) even when the math suggests it. Step-down gradually, validate at each level.
 
 **Confidence scoring**:
-- 7+ days of data, steady pattern → 0.9+
-- 3–7 days, steady → 0.7–0.9
-- <3 days → 0.5 max (flag as low confidence)
-- Burstable patterns cap at 0.8 (inherently less predictable)
-- Batch workloads cap at 0.7 (need multiple execution cycles)
+- 7+ days of data, steady pattern -> 0.95 cap
+- 3-7 days, steady -> 0.7-0.9
+- <3 days -> 0.5 max (low confidence)
+- Burstable patterns cap at 0.80
+- Batch workloads cap at 0.70
 
-**Risk levels**:
-- LOW: Recommendation reduces request but stays well above P99
-- MEDIUM: Recommendation is close to P99, minor risk under unusual load
-- HIGH: Workload shows erratic patterns, recommendation may cause OOMKill or throttling
+#### Special Cases
+
+**Best-effort pods** (no resource requests): Instead of skipping, the engine recommends adding requests based on observed usage with a HIGH risk flag.
+
+**Well-sized workloads** (waste < 10%): Appear in reports with "no changes recommended" rather than being silently omitted.
+
+**Anomalous workloads**: Get investigation recommendations, never sizing reductions. Memory reduction is blocked on any workload with a rising memory trend.
 
 ---
 
-### 4. K8s-Sage SLM (The Model)
+### 4. K8s-Sage SLM (L2)
 
-This is the long-term differentiator. A small language model fine-tuned specifically on Kubernetes operational knowledge.
+A small language model fine-tuned specifically on Kubernetes operational knowledge.
 
 #### Why a Specialist Model
 
-General-purpose LLMs (GPT-4, Llama, Phi-3) know about Kubernetes from their pretraining data, but they lack:
+General-purpose LLMs (GPT-4, Llama) know about Kubernetes from pretraining but lack:
 
-- **Metric interpretation skills**: They can't look at a CPU time series and recognise a memory leak pattern vs. legitimate growth vs. a cron spike
-- **Right-sizing intuition**: They don't know that a JVM workload needs memory headroom for GC, or that a Go service can safely run closer to its P99
-- **K8s-specific context**: They don't know that DaemonSets shouldn't be right-sized the same way as Deployments, or that init containers don't need sustained resources
+- **Metric interpretation**: Can't distinguish a memory leak from legitimate growth from a cron spike
+- **Right-sizing intuition**: Don't know that JVM needs GC headroom, or that Go services can run closer to P99
+- **K8s-specific context**: Don't know that DaemonSets shouldn't be right-sized like Deployments, or that init containers don't need sustained resources
 
-A specialist model trained on this domain knowledge will be smaller, faster, and more accurate than a general model prompted with the same questions.
+#### Model
 
-#### Base Model Selection
+| Property | Value |
+|----------|-------|
+| Base model | AI21 Jamba Reasoning 3B (hybrid Mamba-Transformer) |
+| Fine-tuning | QLoRA (r=8, alpha=16, NF4 4-bit) via SFTTrainer |
+| Quantisation | GGUF Q4_K_M (~1.8GB) |
+| Serving | llama.cpp (CPU-only, ~2.5Gi RAM) |
+| Inference | Single HTTP POST to `/completion`, <5s latency |
 
-| Candidate | Params | Q4 Size | CPU RAM | Rationale |
-|-----------|--------|---------|---------|-----------|
-| **Phi-3 Mini** | 3.8B | ~2.2GB | ~3GB | Best reasoning for size, ONNX CPU support, MIT licence |
-| TinyLlama 1.1B | 1.1B | ~0.7GB | ~1GB | Smallest viable, faster inference, but weaker reasoning |
-| Phi-3.5 Mini | 3.8B | ~2.2GB | ~3GB | Improved over Phi-3, if available in GGUF |
-| Qwen2.5 3B | 3B | ~1.8GB | ~2.5GB | Strong multilingual, Apache 2.0 |
+Jamba's hybrid Mamba-Transformer architecture was chosen for linear-time inference and strong structured output (JSON) capabilities. See [MODEL_DESIGN.md](MODEL_DESIGN.md) for full rationale.
 
-**Current recommendation**: Start with **Phi-3 Mini 4K Instruct** as the base. It's the best balance of reasoning capability, size, licence (MIT), and CPU inference performance. Fine-tune with LoRA, merge, quantize to Q4 GGUF, serve via Ollama.
+#### Training Data
 
-If Phi-3 proves too large for customer environments, fall back to TinyLlama with a more focused training dataset.
+6,982 validated instruction pairs from 6 sources:
 
-#### Training Data and Fine-Tuning
+| Source | Count | % |
+|--------|-------|---|
+| Synthetic (mirrors rules engine) | 3,523 | 50.5% |
+| Stack Overflow | 2,405 | 34.5% |
+| GitHub Issues | 530 | 7.6% |
+| K8s Docs | 289 | 4.1% |
+| Expert pairs | 169 | 2.4% |
+| VPA source analysis | 66 | 0.9% |
 
-The training dataset targets 12,000 instruction pairs (85% real sources, 15% synthetic gap-fillers) and the model is fine-tuned via LoRA on Phi-3 Mini 4K Instruct, then quantised to GGUF Q4_K_M for CPU-only serving via Ollama. Full details are maintained in dedicated documents to avoid drift:
+The synthetic data generator (`ml/dataset/generate_synthetic.py`) produces metric-to-recommendation pairs that mirror the Go rules engine exactly, covering 7 scenario categories with runtime-specific variants (JVM, Go, Python, Node.js, .NET, Ruby).
 
-- **[TRAINING_DATA.md](TRAINING_DATA.md)** — Source breakdown, JSONL schema, quality criteria, deduplication strategy, and provenance tracking. The canonical system prompt for all training pairs is defined here.
-- **[MODEL_DESIGN.md](MODEL_DESIGN.md)** — Base model rationale, LoRA configuration, post-training pipeline, Ollama Modelfile, serving architecture, and evaluation plan.
+See [TRAINING_DATA.md](TRAINING_DATA.md) for the full dataset methodology.
 
-#### SLM Integration in the Server
+#### L1 + L2 Orchestration
 
-```go
-// internal/slm/client.go
-type SLMClient interface {
-    Analyze(ctx context.Context, req AnalysisRequest) (*AnalysisResponse, error)
-    HealthCheck(ctx context.Context) error
-}
+The analyzer always runs both layers, with L1 as the safety floor:
 
-// The server checks if SLM is available and uses it to enhance
-// rules engine output. If SLM is unavailable, rules engine output
-// is returned as-is.
-func (a *Analyzer) Analyze(ctx context.Context, state *ClusterState) (*Report, error) {
-    report := a.rules.Analyze(state)  // Always runs
-    
-    if a.slm != nil {
-        enhanced, err := a.slm.Analyze(ctx, report.ToPrompt())
-        if err != nil {
-            slog.Warn("SLM unavailable, using rules-only", "error", err)
-            return report, nil  // Graceful degradation
-        }
-        report.EnrichWith(enhanced)
-    }
-    
-    return report, nil
-}
 ```
+1. Run L1 rules engine (< 1ms, always runs)
+2. If SLM not configured -> return L1 result
+3. Call L2 with timeout (10s default)
+4. If L2 succeeds -> validate against L1 safety invariants
+5. If L2 passes safety -> merge (L2 values, L1 safety as floor)
+6. If L2 violates safety -> use L1 result, log violation
+7. If L2 fails/times out -> use L1 result, log error
+```
+
+L2 adds nuance that L1 cannot: natural language explanations, runtime-specific tuning advice, pattern recognition beyond simple thresholds. But L2 can never recommend below L1's safety floors.
 
 ---
 
@@ -323,33 +316,62 @@ All responses are JSON. The `Accept: text/plain` header returns human-readable o
 ### Helm Chart
 
 ```bash
-helm repo add k8s-sage https://k8s-sage.github.io/charts
-helm install k8s-sage k8s-sage/k8s-sage
+helm install k8s-sage deploy/helm/k8s-sage
 
 # With SLM enabled
-helm install k8s-sage k8s-sage/k8s-sage --set slm.enabled=true
+helm install k8s-sage deploy/helm/k8s-sage --set slm.enabled=true
 
 # Custom resource budgets for large clusters
-helm install k8s-sage k8s-sage/k8s-sage \
+helm install k8s-sage deploy/helm/k8s-sage \
   --set agent.resources.requests.memory=100Mi \
   --set agent.store.retentionHours=336
 ```
 
 ### Minimal Deployment (no model)
 
-Agent DaemonSet + Server Deployment + CLI. Rules engine only. Total cluster overhead: ~50Mi per node + 256Mi for server.
+Agent DaemonSet + Server Deployment + CLI. L1 rules engine only. Total cluster overhead: ~50Mi per node + 256Mi for server.
 
 ### Full Deployment (with model)
 
-Above + Ollama Deployment running k8s-sage SLM. Additional overhead: ~3Gi for model serving pod.
+Above + llama.cpp Deployment running k8s-sage SLM. Additional overhead: ~2.5Gi for model serving pod (CPU-only).
 
 ---
 
-## Future Roadmap
+## Project Status
 
-- **v0.1**: Agent + rules engine + CLI (pre-March 16 target)
-- **v0.2**: SLM fine-tuned and integrated via Ollama
-- **v0.3**: Training data pipeline for continuous improvement from anonymised cluster data
-- **v0.4**: Web dashboard
-- **v0.5**: Prometheus/Grafana integration (native dashboards)
-- **v1.0**: Stable API, published model on HuggingFace, Helm chart in Artifact Hub
+### Complete
+- In-cluster infrastructure: agent, server, rules engine, CLI, Helm chart, CI/CD
+- L1 rules engine with safety invariants (floors, caps, anomaly detection, classification guards)
+- ML pipeline: 6,982 training pairs, QLoRA training script, merge/quantise, evaluation, serving
+- Go SLM integration: client, prompts, parser (21 tests), L1+L2 analyzer orchestrator
+- 8 dogfood workload archetypes with validation scripts
+
+### Ready (blocked on GPU)
+- Fine-tune Jamba 3B on Threadripper + dual RTX 3090 (`./scripts/train.sh`)
+- Merge + GGUF quantise + evaluate (`./scripts/eval_and_deploy.sh`)
+- Dogfood v2 (L1 with fixes) and v3 (with L2)
+
+### Designed (post-model)
+- Slack integration (see [UX_RECOMMENDATION_FLOW.md](UX_RECOMMENDATION_FLOW.md))
+- Grafana dashboards
+- ArgoCD/Flux GitOps auto-detection
+- PR creation flow for automated right-sizing
+
+---
+
+## Key Files
+
+| Path | Purpose |
+|------|---------|
+| `internal/rules/patterns.go` | Workload classification (steady/burstable/batch/idle/anomalous) |
+| `internal/rules/recommendations.go` | Right-sizing logic, safety floors, reduction caps |
+| `internal/rules/engine.go` | Orchestrates classification + recommendation |
+| `internal/server/analyzer.go` | L1+L2 orchestrator with safety fallback |
+| `internal/slm/client.go` | llama.cpp HTTP client |
+| `internal/slm/prompts.go` | Prompt construction from workload metrics |
+| `internal/slm/parser.go` | Structured JSON response parsing |
+| `ml/training/finetune_lora.py` | QLoRA fine-tuning (SFTTrainer) |
+| `ml/dataset/generate_synthetic.py` | Synthetic training pair generator |
+| `deploy/helm/k8s-sage/values.yaml` | Deployment configuration |
+| `docs/MODEL_DESIGN.md` | Model selection, training config, evaluation targets |
+| `docs/TRAINING_DATA.md` | Dataset methodology and provenance |

@@ -1,3 +1,4 @@
+# Build artifacts
 bin/
 /agent
 /cli
@@ -5,6 +6,30 @@ bin/
 *.exe
 *.test
 *.out
+coverage.out
+
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+
+# Training artifacts
+output/
+wandb/
+
+# Environment
 .env
 .DS_Store
-coverage.out
+
+# Session docs (kept local, not tracked)
+TESTING_VALIDATION.md
+docs/DAY3_STATUS_REPORT.md
+docs/DAY4_PLAN.md
+docs/DAY4_STATUS_REPORT.md
+docs/L1_RULES_ENGINE_FIXES.md
+docs/L2_RULES_ENGINE_FIXES.md
+ml/dataset/reports/expert_pairs_report.md
+ml/dataset/reports/github_issues_report.md
+ml/dataset/reports/k8s_docs_report.md
+ml/dataset/reports/stackoverflow_report.md
+ml/dataset/reports/vpa_source_report.md

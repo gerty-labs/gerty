@@ -37,7 +37,7 @@ See `docs/ARCHITECTURE.md` for the full system design. Summary:
 │  │        ▼         │               │
 │  │  ┌────────────┐  │               │
 │  │  │ K8s SLM    │  │  (Optional)   │
-│  │  │ (Ollama)   │  │               │
+│  │  │ (llama.cpp)│  │               │
 │  │  └────────────┘  │               │
 │  └────────┬─────────┘               │
 │           ▼                         │
@@ -57,7 +57,7 @@ See `docs/ARCHITECTURE.md` for the full system design. Summary:
 | Server | Go 1.22+ | chi router, aggregation + rules engine |
 | CLI | Go 1.22+ | cobra |
 | ML training pipeline | Python 3.11+ | transformers, peft, datasets (HuggingFace) |
-| Model serving | Python / Ollama | GGUF quantized model via Ollama |
+| Model serving | llama.cpp | GGUF Q4_K_M, CPU-only via llama.cpp server |
 | Helm chart | YAML | Helm 3 |
 | Training data | JSONL | Instruction-tuning format |
 
@@ -69,79 +69,73 @@ k8s-sage/
 ├── README.md
 ├── COPYRIGHT                      # Proprietary — all rights reserved
 ├── Makefile
+├── pyproject.toml                 # Python deps ([train], [eval], [lint])
 ├── go.mod / go.sum
 │
 ├── cmd/
 │   ├── agent/main.go              # DaemonSet entrypoint
 │   ├── server/main.go             # Server entrypoint
-│   └── cli/main.go                # CLI entrypoint
+│   └── cli/                       # CLI entrypoint + subcommands
 │
 ├── internal/
-│   ├── agent/
-│   │   ├── collector.go           # Kubelet/cAdvisor metric scraping
-│   │   ├── store.go               # Rolling window in-memory store
-│   │   └── reporter.go            # /report endpoint + push to server
+│   ├── agent/                     # Collector, store, reporter, pusher
 │   ├── server/
-│   │   ├── aggregator.go          # Collect reports from all agents
-│   │   ├── analyzer.go            # Orchestrate rules + optional SLM
+│   │   ├── aggregator.go          # Collect + aggregate by owner
+│   │   ├── analyzer.go            # L1+L2 orchestrator with safety fallback
 │   │   └── api.go                 # REST handlers
 │   ├── rules/
-│   │   ├── engine.go              # Deterministic right-sizing rules
-│   │   ├── patterns.go            # Workload classification (steady/burst/batch)
-│   │   └── recommendations.go     # Generate structured recommendations
+│   │   ├── engine.go              # Orchestrates classification + recommendation
+│   │   ├── patterns.go            # Classification (steady/burstable/batch/idle/anomalous)
+│   │   └── recommendations.go     # Right-sizing, safety floors, reduction caps
 │   ├── slm/
-│   │   ├── client.go              # Client for local Ollama/model endpoint
-│   │   ├── prompts.go             # Prompt templates for K8s analysis
-│   │   └── parser.go              # Parse structured responses from model
-│   └── models/
-│       ├── metrics.go             # Core metric types
-│       ├── report.go              # Report structures
-│       └── recommendation.go      # Recommendation types
+│   │   ├── client.go              # llama.cpp HTTP client
+│   │   ├── prompts.go             # Prompt construction from workload metrics
+│   │   └── parser.go              # JSON response parsing + validation
+│   └── models/                    # Shared types (metrics, reports, recommendations)
 │
 ├── ml/
-│   ├── README.md                  # ML roadmap and methodology
 │   ├── dataset/
-│   │   ├── sources.md             # Documented data sources
-│   │   ├── collect_k8s_docs.py    # Scrape K8s official docs
-│   │   ├── collect_gh_issues.py   # K8s GitHub issues related to resources
-│   │   ├── collect_so.py          # Stack Overflow K8s resource questions
-│   │   ├── generate_synthetic.py  # Generate metric→recommendation pairs
-│   │   ├── format_instruct.py     # Convert all sources to JSONL
-│   │   └── data/                  # Output datasets
+│   │   ├── data/training_data.jsonl     # 6,982 validated pairs
+│   │   ├── raw/                         # Per-source JSONL files
+│   │   ├── examples/expert_pairs.jsonl  # Hand-written expert pairs
+│   │   ├── generate_synthetic.py        # Rules engine → synthetic pairs
+│   │   ├── format_instruct.py           # Validate, dedup, merge → final dataset
+│   │   ├── collect_*.py                 # Data collection scripts
+│   │   ├── generate_*.py                # Data generation scripts
+│   │   └── reports/                     # Dataset analytics
 │   ├── training/
-│   │   ├── finetune_lora.py       # LoRA fine-tuning script
-│   │   ├── merge_and_quantize.py  # Merge adapters + GGUF quantization
-│   │   ├── eval.py                # Benchmark against general models
-│   │   └── configs/               # Hyperparameter configs
+│   │   ├── finetune_lora.py       # QLoRA fine-tuning (SFTTrainer, --dry-run)
+│   │   ├── merge_and_quantize.py  # Merge LoRA + GGUF Q4_K_M
+│   │   ├── eval.py                # Accuracy, safety, pattern metrics
+│   │   └── configs/default.yaml   # Jamba 3B QLoRA config
 │   └── serving/
-│       ├── Modelfile              # Ollama Modelfile for k8s-sage
-│       └── test_inference.py      # Smoke tests for model quality
+│       ├── run_llama_cpp.sh       # llama.cpp launch script
+│       ├── Modelfile              # Model parameters
+│       └── test_inference.py      # 5-scenario smoke test
 │
-├── deploy/
-│   └── helm/k8s-sage/
-│       ├── Chart.yaml
-│       ├── values.yaml
-│       └── templates/
-│
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── TRAINING_DATA.md           # Dataset methodology
-│   └── MODEL_DESIGN.md            # Model selection and fine-tuning approach
+├── deploy/helm/k8s-sage/          # Helm chart (agent, server, SLM)
 │
 ├── test/
-│   ├── unit/
-│   ├── integration/
-│   └── fixtures/                  # Mock kubelet responses, sample metrics
+│   ├── backtest/                  # 52 scenario regression tests
+│   ├── safety/                    # 8 safety invariant tests
+│   ├── integration/               # End-to-end tests
+│   ├── dogfood/                   # 8 workload archetypes + validation
+│   └── fixtures/                  # Backtest scenarios JSON
 │
 ├── scripts/
+│   ├── train.sh                   # One-command training (DRY_RUN support)
+│   ├── eval_and_deploy.sh         # Merge + quantise + evaluate
 │   ├── setup-dev.sh
 │   └── kind-cluster.sh
 │
-├── Dockerfile.agent
-├── Dockerfile.server
-└── .github/workflows/
-    ├── ci.yaml
-    └── release.yaml
+├── docs/
+│   ├── ARCHITECTURE.md            # System design (this is the source of truth)
+│   ├── MODEL_DESIGN.md            # Model selection + training config
+│   ├── TRAINING_DATA.md           # Dataset methodology + provenance
+│   ├── TESTING_RIG_RUNBOOK.md     # Clone → train → deploy guide
+│   └── UX_RECOMMENDATION_FLOW.md  # Slack integration design
+│
+└── .github/workflows/ci.yaml
 ```
 
 ## Coding Standards
@@ -185,44 +179,32 @@ make test-integration # Requires running cluster
 ### Rules engine is the MVP, SLM is the differentiator
 The rules engine provides deterministic right-sizing (e.g., "pod requests 4 CPU, P95 usage is 0.3, recommend 0.5 with headroom"). This works without any model. The SLM adds nuance: pattern recognition, natural language explanations, workload classification that rules can't capture.
 
-### SLM runs via Ollama as a single central deployment
-Not per-node. One instance serves the whole cluster. The model is invoked on-demand or on a schedule, not continuously. Target: Phi-3 Mini or TinyLlama base, Q4 GGUF, ~2.5GB RAM, CPU-only.
+### L1 rules engine is always the safety floor
+The SLM (L2) can enhance recommendations but never override L1 safety invariants: 50m CPU floor, 64Mi memory floor, confidence-gated reduction caps (30%/50%/75%), anomaly detection. If L2 fails or violates safety, L1 stands.
+
+### SLM runs via llama.cpp as a single central deployment
+Not per-node. One instance serves the whole cluster. The model is invoked on-demand or on a schedule, not continuously. Base: AI21 Jamba Reasoning 3B, QLoRA fine-tuned, GGUF Q4_K_M, ~2.5GB RAM, CPU-only.
 
 ### Training data is as valuable as the model
 The curated K8s efficiency dataset doesn't exist anywhere. Sources include: K8s docs, VPA recommender logic, GitHub issues, Stack Overflow, cloud provider best practices, and synthetically generated metric→recommendation pairs. This dataset is core IP.
 
-## Sprint Plan (Pre-March 16)
+## Project Status
 
-### Week 1 (Feb 28 – Mar 7): Foundation
-- [ ] Repo init, Go module, project scaffolding
-- [ ] Agent: kubelet summary API collector
-- [ ] Agent: rolling window in-memory store with downsampling
-- [ ] Agent: /report endpoint (JSON waste per pod)
-- [ ] Server: basic aggregation from agents
-- [ ] Rules engine: simple right-sizing (request vs P95 usage)
-- [ ] Unit tests for collector, store, rules
+67 commits. All development work complete. See `docs/ARCHITECTURE.md` for detailed status.
 
-### Week 2 (Mar 8 – Mar 15): Intelligence & Packaging
-- [ ] Server: full REST API
-- [ ] CLI: cluster report, namespace drill-down
-- [ ] Workload pattern classification (steady/burstable/batch)
-- [ ] ML dataset: begin curation pipeline
-- [ ] ML dataset: K8s docs extraction
-- [ ] ML dataset: synthetic metric→recommendation pair generation
-- [ ] Helm chart with working defaults
-- [ ] Dockerfiles for agent and server
-- [ ] kind-based integration test
-- [ ] README, ARCHITECTURE.md, TRAINING_DATA.md
-- [ ] Dataset format spec (instruction-tuning JSONL)
+### Complete
+- Agent, server, rules engine (with L1 safety fixes), CLI, Helm chart, CI/CD
+- ML pipeline: 6,982 training pairs, QLoRA script, merge/quantise, eval, serving
+- Go SLM integration: client, prompts, parser (21 tests), L1+L2 analyzer
+- Dogfood workloads (8 archetypes) with validation scripts
 
-### Post-Start (personal time): Model Training
-- [ ] Complete dataset curation (target: 10k+ instruction pairs)
-- [ ] Fine-tune Phi-3 Mini with LoRA
-- [ ] Quantize to GGUF Q4
-- [ ] Create Ollama Modelfile
-- [ ] Integrate model into server via slm/ package
-- [ ] Benchmark against GPT-4 / base Phi-3 on K8s tasks
-- [ ] Publish model to HuggingFace
+### Next: Training on GPU rig
+- `./scripts/train.sh` — fine-tune Jamba 3B (3-6h on dual 3090)
+- `./scripts/eval_and_deploy.sh` — merge, quantise, evaluate
+- Dogfood v2 (L1) and v3 (with L2)
+
+### Future: Post-model validation
+- Slack integration, Grafana dashboards, GitOps PR creation
 
 ## Context for Claude Code
 
