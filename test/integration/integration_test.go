@@ -25,7 +25,8 @@ func setupTestServer(t *testing.T) (*httptest.Server, *server.Aggregator) {
 	t.Helper()
 	agg := server.NewAggregator()
 	engine := rules.NewEngine()
-	api := server.NewAPI(agg, engine)
+	analyzer := server.NewAnalyzer(engine, nil)
+	api := server.NewAPI(agg, engine, analyzer)
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)

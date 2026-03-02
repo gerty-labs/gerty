@@ -34,7 +34,8 @@ func decodeResponse(t *testing.T, w *httptest.ResponseRecorder, target interface
 func newTestAPI() (*Aggregator, *API) {
 	agg := NewAggregator()
 	engine := rules.NewEngine()
-	api := NewAPI(agg, engine)
+	analyzer := NewAnalyzer(engine, nil)
+	api := NewAPI(agg, engine, analyzer)
 	return agg, api
 }
 

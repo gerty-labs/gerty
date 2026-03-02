@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,11 +42,12 @@ const (
 type API struct {
 	aggregator *Aggregator
 	engine     *rules.Engine
+	analyzer   *Analyzer
 }
 
-// NewAPI creates a new API with the given Aggregator and rules Engine.
-func NewAPI(aggregator *Aggregator, engine *rules.Engine) *API {
-	return &API{aggregator: aggregator, engine: engine}
+// NewAPI creates a new API with the given Aggregator, rules Engine, and Analyzer.
+func NewAPI(aggregator *Aggregator, engine *rules.Engine, analyzer *Analyzer) *API {
+	return &API{aggregator: aggregator, engine: engine, analyzer: analyzer}
 }
 
 // RegisterRoutes registers all API routes on the given ServeMux.
@@ -325,11 +327,53 @@ func (api *API) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 			req.Namespace: nsReport,
 		},
 	}
-	recs := api.engine.AnalyzeCluster(clusterReport)
+
+	// Use Analyzer if available (L1+L2), otherwise fall back to rules-only.
+	var recs []models.Recommendation
+	if api.analyzer != nil {
+		recs = api.analyzeClusterWithSLM(r.Context(), clusterReport)
+	} else {
+		recs = api.engine.AnalyzeCluster(clusterReport)
+	}
+
 	if recs == nil {
 		recs = []models.Recommendation{}
 	}
 	writeJSON(w, http.StatusOK, recs)
+}
+
+// analyzeClusterWithSLM runs the Analyzer (L1+L2) across all owners in a cluster report.
+func (api *API) analyzeClusterWithSLM(ctx context.Context, report models.ClusterReport) []models.Recommendation {
+	var recs []models.Recommendation
+
+	for _, nsReport := range report.Namespaces {
+		for _, owner := range nsReport.Owners {
+			for _, cw := range owner.Containers {
+				input := rules.AnalysisInput{
+					Owner:             owner.Owner,
+					ContainerName:     cw.ContainerName,
+					CPUUsageMillis:    cw.CPUUsage,
+					CPURequestMillis:  cw.CPURequestMillis,
+					CPULimitMillis:    0,
+					MemUsageBytes:     cw.MemoryUsage,
+					MemRequestBytes:   cw.MemoryRequestBytes,
+					MemLimitBytes:     0,
+					DataWindowMinutes: cw.DataWindow.Minutes(),
+				}
+
+				result := api.analyzer.Analyze(ctx, input)
+
+				if result.CPURecommendation != nil {
+					recs = append(recs, *result.CPURecommendation)
+				}
+				if result.MemRecommendation != nil {
+					recs = append(recs, *result.MemRecommendation)
+				}
+			}
+		}
+	}
+
+	return recs
 }
 
 // validateNodeReport checks that a NodeReport has all required fields and

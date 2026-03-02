@@ -10,6 +10,7 @@ import (
 
 	"github.com/gregorytcarroll/k8s-sage/internal/rules"
 	"github.com/gregorytcarroll/k8s-sage/internal/server"
+	"github.com/gregorytcarroll/k8s-sage/internal/slm"
 )
 
 func main() {
@@ -24,10 +25,22 @@ func main() {
 	aggregator := server.NewAggregator()
 	engine := rules.NewEngine()
 
+	// Optional SLM client for L2 recommendations
+	var slmClient *slm.Client
+	slmURL := os.Getenv("SLM_URL")
+	if slmURL != "" {
+		slmClient = slm.NewClient(slmURL, 10*time.Second)
+		slog.Info("SLM enabled", "url", slmURL)
+	} else {
+		slog.Info("SLM disabled (set SLM_URL to enable)")
+	}
+
+	analyzer := server.NewAnalyzer(engine, slmClient)
+
 	done := make(chan struct{})
 	aggregator.StartPruner(done)
 
-	api := server.NewAPI(aggregator, engine)
+	api := server.NewAPI(aggregator, engine, analyzer)
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)
 
