@@ -1,4 +1,4 @@
-.PHONY: build test lint clean docker-build dev-cluster dev-deploy test-integration backtest test-safety \
+.PHONY: build test lint lint-python lint-helm clean docker-build dev-cluster dev-deploy test-integration backtest test-safety \
 	dogfood setup-workloads generate-load validate validate-classifications validate-recommendations validate-savings teardown
 
 BINARY_DIR := bin
@@ -14,6 +14,14 @@ test:
 lint:
 	go vet ./...
 	@which staticcheck > /dev/null 2>&1 && staticcheck ./... || echo "staticcheck not installed, skipping"
+	@which ruff > /dev/null 2>&1 && ruff check ml/ || echo "ruff not installed, skipping"
+	@which helm > /dev/null 2>&1 && helm lint deploy/helm/k8s-sage/ || echo "helm not installed, skipping"
+
+lint-python:
+	ruff check ml/
+
+lint-helm:
+	helm lint deploy/helm/k8s-sage/
 
 clean:
 	rm -rf $(BINARY_DIR)

@@ -32,11 +32,9 @@ logger = logging.getLogger(__name__)
 
 def merge_adapter(adapter_path: str, output_dir: str) -> None:
     """Load base model + LoRA adapter, merge, and save."""
-    from peft import PeftModel
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
     # Load adapter config to get base model name
-    from peft import PeftConfig
+    from peft import PeftConfig, PeftModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer
 
     peft_config = PeftConfig.from_pretrained(adapter_path)
     base_model_name = peft_config.base_model_name_or_path

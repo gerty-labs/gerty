@@ -407,11 +407,8 @@ def issue_to_pair(
     # Build assistant message from best comment(s).
     answer_parts = []
     for comment in best_comments[:3]:  # Max 3 comments.
-        author = comment.get("user", {}).get("login", "unknown")
-        association = comment.get("author_association", "")
         clean_comment = _clean_body(comment.get("body", ""), max_len=1200)
         if clean_comment:
-            role = f" ({association.lower()})" if association in ("MEMBER", "OWNER") else ""
             answer_parts.append(clean_comment)
 
     assistant_msg = "\n\n---\n\n".join(answer_parts)

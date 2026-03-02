@@ -15,7 +15,7 @@ import json
 import logging
 import math
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -882,7 +882,6 @@ def build_explanation(m: Metrics, cpu_rec: dict, mem_rec: dict, rng: random.Rand
         ) + "\n")
     elif cpu_rec["action"] == "no_change":
         tmpl = rng.choice(CPU_WELLSIZED_TEMPLATES)
-        rec_val = float(cpu_rec["recommended_req"].rstrip("m"))
         parts.append(" " + tmpl.format(
             req=m.cpu_request, p95=m.cpu_p95,
             rec_req=cpu_rec["recommended_req"],

@@ -176,7 +176,6 @@ def section_to_pairs(section: dict, topic: str, source_url: str) -> list[Trainin
         List of TrainingPair objects.
     """
     pairs = []
-    seq = 0
 
     # TODO: Implement transformation logic.
     # For each section:

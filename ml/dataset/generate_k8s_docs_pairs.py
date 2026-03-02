@@ -14,7 +14,6 @@ Usage:
 """
 
 import json
-import sys
 from pathlib import Path
 
 SYSTEM_PROMPT = (

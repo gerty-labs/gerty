@@ -33,3 +33,13 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# Training data generators have long inline string templates
+"ml/dataset/generate_expert_pairs.py" = ["E501"]
+"ml/dataset/generate_k8s_docs_pairs.py" = ["E501"]
+"ml/dataset/generate_vpa_pairs.py" = ["E501"]
+"ml/dataset/generate_synthetic.py" = ["E501"]
+# Training scripts use forward-reference type hints and lambdas for inference dispatch
+"ml/training/finetune_lora.py" = ["F821"]
+"ml/training/eval.py" = ["E501", "E731"]

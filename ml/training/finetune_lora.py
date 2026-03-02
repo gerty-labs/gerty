@@ -18,7 +18,6 @@ Usage:
 import argparse
 import json
 import logging
-import sys
 from pathlib import Path
 
 import yaml
@@ -143,7 +142,7 @@ def print_dry_run_summary(config: dict, dataset: "Dataset") -> None:
     print(f"Train/eval split:  {train_size}/{eval_size} ({eval_split:.0%} eval)")
 
     lora = config["lora"]
-    print(f"\nLoRA config:")
+    print("\nLoRA config:")
     print(f"  Rank:            {lora['r']}")
     print(f"  Alpha:           {lora['alpha']}")
     print(f"  Dropout:         {lora['dropout']}")
@@ -153,7 +152,7 @@ def print_dry_run_summary(config: dict, dataset: "Dataset") -> None:
     eff_batch = t["per_device_train_batch_size"] * t["gradient_accumulation_steps"]
     steps_per_epoch = train_size // eff_batch
     total_steps = steps_per_epoch * t["num_train_epochs"]
-    print(f"\nTraining config:")
+    print("\nTraining config:")
     print(f"  Epochs:          {t['num_train_epochs']}")
     print(f"  Batch size:      {t['per_device_train_batch_size']} × {t['gradient_accumulation_steps']} = {eff_batch}")
     print(f"  Learning rate:   {t['learning_rate']}")
@@ -172,7 +171,7 @@ def print_dry_run_summary(config: dict, dataset: "Dataset") -> None:
     for ex in dataset:
         src = ex.get("source", "unknown")
         sources[src] = sources.get(src, 0) + 1
-    print(f"\nSource distribution:")
+    print("\nSource distribution:")
     for src, count in sorted(sources.items()):
         print(f"  {src}: {count}")
 
@@ -217,8 +216,8 @@ def main() -> None:
     logger.info("Train: %d examples, Eval: %d examples", len(train_dataset), len(eval_dataset))
 
     # Setup trainer
-    from trl import SFTTrainer
     from transformers import TrainingArguments
+    from trl import SFTTrainer
 
     t = config["training"]
     training_args = TrainingArguments(

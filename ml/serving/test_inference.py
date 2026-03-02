@@ -138,11 +138,11 @@ def validate_response(name: str, text: str) -> list[str]:
 
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if not match:
-            return [f"No valid JSON found in response"]
+            return ["No valid JSON found in response"]
         try:
             data = json.loads(match.group(0))
         except json.JSONDecodeError:
-            return [f"Failed to parse JSON from response"]
+            return ["Failed to parse JSON from response"]
 
     # Check required fields
     for field in REQUIRED_FIELDS:
