@@ -66,12 +66,9 @@ func main() {
 			MinSeverity:    minSeverity,
 		}, aggregator, engine)
 
-		ctx, cancel := context.WithCancel(context.Background()) //nolint:govet // cancel called in goroutine on shutdown
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		go notifier.Run(ctx)
-		go func() {
-			<-done
-			cancel()
-		}()
 		slog.Info("Slack notifier enabled", "channel", channel, "interval", interval)
 	}
 

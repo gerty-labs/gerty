@@ -37,6 +37,9 @@ const (
 
 	// maxContainersPerPod is the maximum number of containers in a pod report.
 	maxContainersPerPod = 50
+
+	// msgMethodNotAllowed is the error message for unsupported HTTP methods.
+	msgMethodNotAllowed = "method not allowed"
 )
 
 // API holds the HTTP handlers for sage-server.
@@ -128,7 +131,7 @@ func (api *API) HandleReadyz(w http.ResponseWriter, r *http.Request) {
 // HandleIngest receives a NodeReport from an agent via POST.
 func (api *API) HandleIngest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeError(w, http.StatusMethodNotAllowed, msgMethodNotAllowed)
 		return
 	}
 
@@ -176,7 +179,7 @@ func (api *API) HandleIngest(w http.ResponseWriter, r *http.Request) {
 // HandleReport returns a cluster-wide or namespace-filtered waste report.
 func (api *API) HandleReport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeError(w, http.StatusMethodNotAllowed, msgMethodNotAllowed)
 		return
 	}
 
@@ -210,7 +213,7 @@ func (api *API) HandleReport(w http.ResponseWriter, r *http.Request) {
 // GET /api/v1/workloads/{ns}/{kind}/{name} — single workload detail
 func (api *API) HandleWorkloads(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeError(w, http.StatusMethodNotAllowed, msgMethodNotAllowed)
 		return
 	}
 
@@ -262,7 +265,7 @@ func (api *API) HandleWorkloads(w http.ResponseWriter, r *http.Request) {
 // Supports ?risk= and ?namespace= query filters.
 func (api *API) HandleRecommendations(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeError(w, http.StatusMethodNotAllowed, msgMethodNotAllowed)
 		return
 	}
 
@@ -302,7 +305,7 @@ type analyzeRequest struct {
 // POST /api/v1/analyze — accepts {"namespace":"..."} body
 func (api *API) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeError(w, http.StatusMethodNotAllowed, msgMethodNotAllowed)
 		return
 	}
 

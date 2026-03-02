@@ -10,22 +10,22 @@ jobs:
     name: Go (gremlins)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25'
-      - uses: go-gremlins/gremlins-action@v1
+      - uses: go-gremlins/gremlins-action@e5dc59ad56bda9b70d8b64f9499c44d0fa318a08 # v1
         with:
           version: "latest"
-          args: "unleash --tags='!integration' --threshold 0.60"
+          args: "unleash --tags='!integration' --threshold-efficacy 0.60"
           workdir: "."
 
   python-mutation:
     name: Python (mutmut)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
       - name: Install dependencies
@@ -33,7 +33,7 @@ jobs:
           pip install mutmut pytest
           pip install -e ".[train,eval]" 2>/dev/null || true
       - name: Restore mutmut cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .mutmut-cache
           key: mutmut-${{ github.ref }}-${{ hashFiles('ml/**/*.py') }}
@@ -50,7 +50,7 @@ jobs:
       - name: Generate HTML report
         if: always()
         run: mutmut html || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: mutation-report-python

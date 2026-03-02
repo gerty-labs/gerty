@@ -52,6 +52,7 @@ spec:
             requests:
               cpu: {{ .Values.agent.resources.requests.cpu }}
               memory: {{ .Values.agent.resources.requests.memory }}
+              ephemeral-storage: {{ .Values.agent.resources.requests.ephemeralStorage | default "100Mi" }}
             limits:
               cpu: {{ .Values.agent.resources.limits.cpu }}
               memory: {{ .Values.agent.resources.limits.memory }}

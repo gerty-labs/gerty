@@ -32,7 +32,7 @@ MISMATCHES=$(echo "${RECS}" | jq '[
   select(.diff > 1)
 ] | length')
 
-if [ "${MISMATCHES}" -eq 0 ]; then
+if [[ "${MISMATCHES}" -eq 0 ]]; then
   echo "PASS: all savings calculations are consistent (within +-1 rounding)"
   PASS=$((PASS + 1))
 else
@@ -55,6 +55,6 @@ fi
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 
-if [ "${FAIL}" -gt 0 ]; then
+if [[ "${FAIL}" -gt 0 ]]; then
   exit 1
 fi

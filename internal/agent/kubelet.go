@@ -132,9 +132,11 @@ func NewHTTPKubeletClient(baseURL string) *httpKubeletClient {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true, // #nosec G402 — kubelet uses self-signed certs
-				},
+				// nosemgrep: missing-ssl-minversion, bypass-tls-verification — kubelet uses self-signed certs
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, // #nosec G402
+				MinVersion:         tls.VersionTLS13,
+			},
 			},
 		},
 		token: string(tokenBytes),

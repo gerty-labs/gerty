@@ -26,16 +26,17 @@ check_pattern() {
   got=$(echo "${RECS}" | jq -r --arg prefix "${workload}" \
     '.data[] | select(.target.name | startswith($prefix)) | .pattern' | sort -u | head -1)
 
-  if [ -z "${got}" ] || [ "${got}" = "null" ]; then
+  if [[ -z "${got}" ]] || [[ "${got}" = "null" ]]; then
     echo "FAIL: ${workload} — no recommendation found"
     FAIL=$((FAIL + 1))
-  elif [ "${got}" = "${want}" ]; then
+  elif [[ "${got}" = "${want}" ]]; then
     echo "PASS: ${workload} — pattern=${got}"
     PASS=$((PASS + 1))
   else
     echo "FAIL: ${workload} — expected=${want}, got=${got}"
     FAIL=$((FAIL + 1))
   fi
+  return 0
 }
 
 # Skip a check that requires more data than currently available.
@@ -45,6 +46,7 @@ skip_pattern() {
   local reason="$3"
   echo "SKIP: ${workload} — expected=${want} (${reason})"
   SKIP=$((SKIP + 1))
+  return 0
 }
 
 check_pattern "nginx-overprovisioned" "steady"

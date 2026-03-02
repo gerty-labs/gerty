@@ -180,11 +180,11 @@ func TestMeetsMinSeverity(t *testing.T) {
 
 // --- Integration-style notifier test ---
 
-type mockReportSource struct {
+type mockClusterReporter struct {
 	report models.ClusterReport
 }
 
-func (m *mockReportSource) ClusterReport() models.ClusterReport {
+func (m *mockClusterReporter) ClusterReport() models.ClusterReport {
 	return m.report
 }
 
@@ -197,7 +197,7 @@ func TestNotifier_SendDigest(t *testing.T) {
 	defer server.Close()
 
 	// Build a report with a workload that will generate a recommendation
-	source := &mockReportSource{
+	source := &mockClusterReporter{
 		report: models.ClusterReport{
 			ReportTime: time.Now(),
 			NodeCount:  1,

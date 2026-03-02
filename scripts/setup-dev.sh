@@ -5,7 +5,7 @@ echo "Setting up k8s-sage development environment..."
 
 # Check Go version
 if ! command -v go &> /dev/null; then
-    echo "ERROR: Go is not installed. Install Go 1.22+ first."
+    echo "ERROR: Go is not installed. Install Go 1.22+ first." >&2
     exit 1
 fi
 

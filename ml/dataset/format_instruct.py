@@ -45,7 +45,7 @@ class ValidationError(Exception):
     pass
 
 
-def validate_pair(pair: dict, pair_index: int) -> list[str]:
+def validate_pair(pair: dict, _pair_index: int) -> list[str]:
     """Validate a single training pair against schema and safety invariants.
 
     Returns a list of error messages. Empty list means valid.
