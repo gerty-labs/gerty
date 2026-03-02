@@ -25,6 +25,7 @@ func main() {
 	rootCmd.AddCommand(recommendCmd())
 	rootCmd.AddCommand(workloadsCmd())
 	rootCmd.AddCommand(annotateCmd())
+	rootCmd.AddCommand(discoverCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
