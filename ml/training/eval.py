@@ -330,9 +330,9 @@ def main() -> None:
 
         logger.info("Loading model from %s", args.model_path)
         tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 — local model path
-            args.model_path, trust_remote_code=True)
+            args.model_path, trust_remote_code=True)  # nosemgrep
         model = AutoModelForCausalLM.from_pretrained(  # nosec B615 — local model path
-            args.model_path, trust_remote_code=True, device_map="auto")
+            args.model_path, trust_remote_code=True, device_map="auto")  # nosemgrep
         infer_fn = lambda prompt: infer_hf_model(model, tokenizer, prompt)
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)

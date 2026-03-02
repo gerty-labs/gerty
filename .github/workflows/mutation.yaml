@@ -17,7 +17,7 @@ jobs:
       - uses: go-gremlins/gremlins-action@v1
         with:
           version: "latest"
-          args: "unleash --tags='!integration' --threshold 0.60"
+          args: "unleash --tags='!integration' --threshold-efficacy 0.60"
           workdir: "."
 
   python-mutation:

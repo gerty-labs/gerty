@@ -133,7 +133,7 @@ func NewHTTPKubeletClient(baseURL string) *httpKubeletClient {
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true, // #nosec G402 — kubelet uses self-signed certs
+					InsecureSkipVerify: true, // #nosec G402 // nosemgrep — kubelet uses self-signed certs
 				},
 			},
 		},

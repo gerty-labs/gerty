@@ -20,6 +20,6 @@ jobs:
           go-version: '1.25'
       - name: Run tests with coverage
         run: go test -p 4 -timeout 120s -coverprofile=coverage.out ./...
-      - uses: SonarSource/sonarqube-scan-action@v5
+      - uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

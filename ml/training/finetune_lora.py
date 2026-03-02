@@ -95,12 +95,12 @@ def setup_model_and_tokenizer(config: dict) -> tuple:
         config["base_model"],
         quantization_config=bnb_config,
         device_map="auto",
-        trust_remote_code=True,
+        trust_remote_code=True,  # nosemgrep — model from controlled config
     )
 
     tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 — model from controlled config
         config["base_model"],
-        trust_remote_code=True,
+        trust_remote_code=True,  # nosemgrep
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
