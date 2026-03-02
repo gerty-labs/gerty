@@ -44,11 +44,11 @@ def merge_adapter(adapter_path: str, output_dir: str) -> None:
     logger.info("Loading base model (full precision for merge)...")
     model = AutoModelForCausalLM.from_pretrained(  # nosec B615 — model from controlled config
         base_model_name,
-        trust_remote_code=True,  # nosemgrep — model from controlled config
+        trust_remote_code=True,
     )
 
     tokenizer = AutoTokenizer.from_pretrained(  # nosec B615
-        base_model_name, trust_remote_code=True)  # nosemgrep
+        base_model_name, trust_remote_code=True)
 
     logger.info("Loading LoRA adapter...")
     model = PeftModel.from_pretrained(model, adapter_path)

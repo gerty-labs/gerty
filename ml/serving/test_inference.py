@@ -118,7 +118,7 @@ def send_prompt(url: str, system: str, user: str, max_tokens: int = 512) -> tupl
     )
 
     start = time.monotonic()
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:  # nosemgrep: dynamic-urllib-use-detected
         result = json.loads(resp.read())
     latency = (time.monotonic() - start) * 1000
 
@@ -179,7 +179,7 @@ def check_health(url: str) -> bool:
     """Check if llama.cpp server is reachable."""
     try:
         req = urllib.request.Request(f"{url}/health")
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:  # nosemgrep: dynamic-urllib-use-detected
             return resp.status == 200
     except Exception:
         return False

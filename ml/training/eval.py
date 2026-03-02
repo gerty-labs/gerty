@@ -54,7 +54,7 @@ def infer_llama_cpp(url: str, prompt: str, max_tokens: int = 512) -> tuple[str, 
     )
 
     start = time.monotonic()
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:  # nosemgrep: dynamic-urllib-use-detected
         result = json.loads(resp.read())
     latency = (time.monotonic() - start) * 1000
 
@@ -330,9 +330,9 @@ def main() -> None:
 
         logger.info("Loading model from %s", args.model_path)
         tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 — local model path
-            args.model_path, trust_remote_code=True)  # nosemgrep
+            args.model_path, trust_remote_code=True)
         model = AutoModelForCausalLM.from_pretrained(  # nosec B615 — local model path
-            args.model_path, trust_remote_code=True, device_map="auto")  # nosemgrep
+            args.model_path, trust_remote_code=True, device_map="auto")
         infer_fn = lambda prompt: infer_hf_model(model, tokenizer, prompt)
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)

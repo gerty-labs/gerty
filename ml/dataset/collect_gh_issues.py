@@ -159,7 +159,7 @@ class GitHubClient:
         is_search = "/search/" in url
 
         try:
-            with urllib.request.urlopen(req, context=self._ssl_ctx, timeout=30) as resp:
+            with urllib.request.urlopen(req, context=self._ssl_ctx, timeout=30) as resp:  # nosemgrep: dynamic-urllib-use-detected — URL from GitHub API, not user input
                 # Update rate limit tracking (search and core APIs have separate limits).
                 remaining = int(
                     resp.headers.get("X-RateLimit-Remaining", 999)

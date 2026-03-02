@@ -15,12 +15,12 @@ import (
 type cliRunner struct{}
 
 func (r *cliRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name, args...) // nosemgrep: dangerous-exec-command — name is hardcoded at call sites (gh, kubectl, git)
 	return cmd.Output()
 }
 
 func (r *cliRunner) RunInDir(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name, args...) // nosemgrep: dangerous-exec-command — name is hardcoded at call sites
 	cmd.Dir = dir
 	return cmd.Output()
 }

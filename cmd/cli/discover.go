@@ -15,7 +15,7 @@ import (
 type execRunner struct{}
 
 func (e *execRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name, args...) // nosemgrep: dangerous-exec-command — name is hardcoded at call sites (kubectl)
 	return cmd.Output()
 }
 

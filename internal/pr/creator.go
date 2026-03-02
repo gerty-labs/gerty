@@ -266,7 +266,7 @@ func (p *PRCreator) fetchRecommendation(ctx context.Context, namespace, kind, na
 
 // modifyResourceFile updates resource requests/limits in the specified file.
 func (p *PRCreator) modifyResourceFile(filePath string, annotations *Annotations, rec *models.Recommendation) error {
-	content, err := os.ReadFile(filePath) // #nosec G304 // nosemgrep — path validated at call site (traversal check)
+	content, err := os.ReadFile(filePath) // #nosec G304 — path validated at call site (traversal check)
 	if err != nil {
 		return fmt.Errorf("reading file: %w", err)
 	}
@@ -284,7 +284,7 @@ func (p *PRCreator) modifyResourceFile(filePath string, annotations *Annotations
 		return err
 	}
 
-	return os.WriteFile(filePath, []byte(modified), 0600) // #nosec G304 // nosemgrep — path validated at call site
+	return os.WriteFile(filePath, []byte(modified), 0600) // #nosec G304 — path validated at call site
 }
 
 // modifyManifestFile updates CPU/memory values in a standard K8s manifest.
