@@ -4,12 +4,12 @@ set -euo pipefail
 CLUSTER_NAME="${1:-k8s-sage-dev}"
 
 if ! command -v kind &> /dev/null; then
-    echo "ERROR: kind is not installed. Install from https://kind.sigs.k8s.io/"
+    echo "ERROR: kind is not installed. Install from https://kind.sigs.k8s.io/" >&2
     exit 1
 fi
 
 if ! command -v kubectl &> /dev/null; then
-    echo "ERROR: kubectl is not installed."
+    echo "ERROR: kubectl is not installed." >&2
     exit 1
 fi
 

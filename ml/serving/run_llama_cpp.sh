@@ -13,7 +13,7 @@ CTX_SIZE="${LLAMA_CTX_SIZE:-1024}"
 THREADS="${LLAMA_THREADS:-2}"
 PORT="${LLAMA_PORT:-8080}"
 
-if [ ! -f "$MODEL_PATH" ]; then
+if [[ ! -f "$MODEL_PATH" ]]; then
     echo "Error: model file not found: $MODEL_PATH" >&2
     echo "Build the model first with: python ml/training/merge_and_quantize.py --gguf" >&2
     exit 1

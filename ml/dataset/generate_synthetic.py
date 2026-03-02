@@ -363,7 +363,6 @@ def generate_edge_case(rng: random.Random, runtime: str) -> Metrics:
 
     if variant == "near_zero":
         # Almost no usage but resources allocated
-        profile = PATTERN_PROFILES["steady"]
         cpu_p50 = rand_range(rng, 0.5, 5)
         cpu_p95 = cpu_p50 * rand_range(rng, 1.0, 2.0)
         cpu_p99 = cpu_p95 * rand_range(rng, 1.0, 1.5)
@@ -1019,7 +1018,7 @@ def build_user_message(m: Metrics) -> str:
     return "\n".join(lines)
 
 
-def determine_category(m: Metrics, cpu_rec: dict, mem_rec: dict) -> str:
+def determine_category(m: Metrics, _cpu_rec: dict, _mem_rec: dict) -> str:
     """Determine the training pair category."""
     if m.pattern == "anomalous":
         return "edge-case"

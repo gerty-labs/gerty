@@ -15,8 +15,8 @@ MERGED_PATH="output/k8s-sage-merged"
 DATASET="ml/dataset/data/training_data.jsonl"
 
 # Check adapter exists
-if [ ! -d "$ADAPTER_PATH" ]; then
-    echo "ERROR: LoRA adapter not found at $ADAPTER_PATH"
+if [[ ! -d "$ADAPTER_PATH" ]]; then
+    echo "ERROR: LoRA adapter not found at $ADAPTER_PATH" >&2
     echo "Run ./scripts/train.sh first."
     exit 1
 fi

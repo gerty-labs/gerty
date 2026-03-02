@@ -307,7 +307,7 @@ def _clean_body(body: str, max_len: int = 2000) -> str:
     # Remove HTML comments.
     body = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
     # Remove image links.
-    body = re.sub(r"!\[.*?\]\(.*?\)", "[image]", body)
+    body = re.sub(r"!\[[^\]]*\]\([^\)]*\)", "[image]", body)
     # Remove very long code blocks (>500 chars).
     body = re.sub(r"```[\s\S]{500,}?```", "[long code block omitted]", body)
     # Collapse multiple newlines.
@@ -442,7 +442,7 @@ def issue_to_pair(
     )
 
 
-def collect_all(output_path: Path, verbose: bool = False) -> None:
+def collect_all(output_path: Path, _verbose: bool = False) -> None:
     """Main collection pipeline."""
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -499,7 +499,7 @@ def collect_all(output_path: Path, verbose: bool = False) -> None:
     unique_pairs = []
     content_hashes: set[str] = set()
     for pair in all_pairs:
-        h = hashlib.md5(  # noqa: S324 — used for dedup, not security
+        h = hashlib.md5(  # noqa: S324  # nosec B324
             (pair.user + pair.assistant).encode(),
             usedforsecurity=False,
         ).hexdigest()
@@ -557,7 +557,7 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-    collect_all(args.output, verbose=args.verbose)
+    collect_all(args.output, _verbose=args.verbose)
 
 
 if __name__ == "__main__":

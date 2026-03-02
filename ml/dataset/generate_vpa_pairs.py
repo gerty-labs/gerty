@@ -20,6 +20,10 @@ SYSTEM_PROMPT = (
 
 OUTPUT_PATH = Path(__file__).parent / "raw" / "vpa_source_pairs.jsonl"
 
+VPA_PROVENANCE_URL = (
+    "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+)
+
 
 def make_pair(
     id_str: str, user: str, assistant: str, category: str,
@@ -45,7 +49,7 @@ def make_pair(
 
 def percentile_estimation_pairs() -> list[dict]:
     """Pairs about percentile selection for CPU and memory."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-001",
             "Why does VPA use P95 for CPU recommendations but P99 for memory?",
@@ -79,7 +83,7 @@ def percentile_estimation_pairs() -> list[dict]:
 
 def pattern_classification_pairs() -> list[dict]:
     """Pairs about workload pattern detection and classification."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-classification-001",
             "How do you classify a workload as steady, burstable, batch, or idle?",
@@ -113,7 +117,7 @@ def pattern_classification_pairs() -> list[dict]:
 
 def oom_handling_pairs() -> list[dict]:
     """Pairs about OOM detection, bump-up logic, and memory safety."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-edge-case-001",
             "How does VPA's OOM bump-up algorithm work?",
@@ -147,7 +151,7 @@ def oom_handling_pairs() -> list[dict]:
 
 def headroom_safety_pairs() -> list[dict]:
     """Pairs about headroom calculation and safety margins."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-006",
             "Why is 20% headroom the standard recommendation for CPU right-sizing?",
@@ -176,7 +180,7 @@ def headroom_safety_pairs() -> list[dict]:
 
 def confidence_scoring_pairs() -> list[dict]:
     """Pairs about recommendation confidence and data quality."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-010",
             "How should I score confidence in a right-sizing recommendation?",
@@ -200,7 +204,7 @@ def confidence_scoring_pairs() -> list[dict]:
 
 def decay_history_pairs() -> list[dict]:
     """Pairs about VPA's half-life mechanism and history handling."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-013",
             "How does VPA's exponential decay work, and when should I tune the half-life?",
@@ -219,7 +223,7 @@ def decay_history_pairs() -> list[dict]:
 
 def container_policy_pairs() -> list[dict]:
     """Pairs about VPA modes, policies, and configuration."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-015",
             "What are the differences between VPA's UpdateMode settings (Off, Initial, Recreate, Auto)?",
@@ -243,7 +247,7 @@ def container_policy_pairs() -> list[dict]:
 
 def risk_assessment_pairs() -> list[dict]:
     """Pairs about risk evaluation in right-sizing recommendations."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-018",
             "How do I quantify the risk of applying a right-sizing recommendation?",
@@ -267,7 +271,7 @@ def risk_assessment_pairs() -> list[dict]:
 
 def waste_detection_pairs() -> list[dict]:
     """Pairs about detecting and quantifying resource waste."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-020",
             "What threshold constitutes 'waste' in Kubernetes resource requests?",
@@ -291,7 +295,7 @@ def waste_detection_pairs() -> list[dict]:
 
 def recommendation_limits_pairs() -> list[dict]:
     """Pairs about floors, ceilings, and rate limiting recommendations."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-022",
             "What are sensible floor values for CPU and memory requests?",
@@ -310,7 +314,7 @@ def recommendation_limits_pairs() -> list[dict]:
 
 def vpa_internals_pairs() -> list[dict]:
     """Pairs about VPA architecture and internal mechanisms."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-024",
             "What are the three VPA components and what does each do?",
@@ -334,7 +338,7 @@ def vpa_internals_pairs() -> list[dict]:
 
 def multi_resource_pairs() -> list[dict]:
     """Pairs about joint CPU+memory recommendations and in-place resize."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-026",
             "Should I right-size CPU and memory independently or together?",
@@ -358,7 +362,7 @@ def multi_resource_pairs() -> list[dict]:
 
 def operational_vpa_pairs() -> list[dict]:
     """Pairs about deploying and operating VPA in production."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-028",
             "What's the recommended way to deploy VPA in a production cluster?",
@@ -382,7 +386,7 @@ def operational_vpa_pairs() -> list[dict]:
 
 def vpa_edge_cases_pairs() -> list[dict]:
     """Pairs about VPA edge cases and uncommon scenarios."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-edge-case-010",
             "How does VPA handle StatefulSets differently from Deployments?",
@@ -406,7 +410,7 @@ def vpa_edge_cases_pairs() -> list[dict]:
 
 def scenario_cpu_pairs() -> list[dict]:
     """Scenario-based pairs: given metrics, recommend CPU sizing."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-030",
             "My Java API has: CPU request 4000m, P50=180m, P95=350m, P99=520m, Max=1800m. The P99 is during GC pauses. How should I right-size?",
@@ -437,7 +441,7 @@ def scenario_cpu_pairs() -> list[dict]:
 
 def scenario_memory_pairs() -> list[dict]:
     """Scenario-based pairs: given metrics, recommend memory sizing."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-035",
             "Node.js API: Memory request 2Gi, P50=400Mi, P95=600Mi, P99=800Mi, Max=1.5Gi. Usage shows a sawtooth pattern. How to right-size?",
@@ -468,7 +472,7 @@ def scenario_memory_pairs() -> list[dict]:
 
 def comparison_pairs() -> list[dict]:
     """Pairs comparing different right-sizing approaches."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-039",
             "Why does VPA recommend 800m CPU when the simple average is 200m?",
@@ -489,7 +493,7 @@ def comparison_pairs() -> list[dict]:
 
 def troubleshooting_pairs() -> list[dict]:
     """Troubleshooting pairs for common right-sizing issues."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-edge-case-014",
             "After right-sizing, our cluster autoscaler is adding more nodes. Why?",
@@ -510,7 +514,7 @@ def troubleshooting_pairs() -> list[dict]:
 
 def workload_specific_vpa_pairs() -> list[dict]:
     """Workload-specific VPA/right-sizing guidance."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-041",
             "How should I right-size a Kafka broker deployment?",
@@ -531,7 +535,7 @@ def workload_specific_vpa_pairs() -> list[dict]:
 
 def algorithm_detail_pairs() -> list[dict]:
     """Detailed algorithmic pairs about the right-sizing calculation."""
-    p = "https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler"
+    p = VPA_PROVENANCE_URL
     return [
         make_pair("vpa-source-right-sizing-044",
             "Walk me through the complete right-sizing algorithm for a new deployment step by step.",

@@ -90,7 +90,7 @@ def extract_json_from_response(text: str) -> dict | None:
         pass
 
     # Try to find JSON block in markdown
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    match = re.search(r"```(?:json)?\s*(\{[^\}]*\})\s*```", text, re.DOTALL)
     if match:
         try:
             return json.loads(match.group(1))
@@ -164,7 +164,7 @@ def check_right_sizing(predicted: dict, ground_truth: dict, tolerance: float = 0
     return results
 
 
-def check_safety_invariants(predicted: dict, test_example: dict) -> dict:
+def check_safety_invariants(predicted: dict, _test_example: dict) -> dict:
     """Check safety invariants from MODEL_DESIGN.md.
 
     - Memory recommendation >= P99 working set × 1.10

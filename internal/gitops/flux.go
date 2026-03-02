@@ -11,24 +11,34 @@ type fluxKustomizationList struct {
 	Items []fluxKustomization `json:"items"`
 }
 
+type fluxMetadata struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+type fluxSourceRef struct {
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+type fluxKustomizationSpec struct {
+	Path      string        `json:"path"`
+	SourceRef fluxSourceRef `json:"sourceRef"`
+}
+
+type fluxInventory struct {
+	Entries []fluxInventoryEntry `json:"entries"`
+}
+
+type fluxKustomizationStatus struct {
+	Inventory fluxInventory `json:"inventory"`
+}
+
 type fluxKustomization struct {
-	Metadata struct {
-		Name      string `json:"name"`
-		Namespace string `json:"namespace"`
-	} `json:"metadata"`
-	Spec struct {
-		Path      string `json:"path"`
-		SourceRef struct {
-			Kind      string `json:"kind"`
-			Name      string `json:"name"`
-			Namespace string `json:"namespace"`
-		} `json:"sourceRef"`
-	} `json:"spec"`
-	Status struct {
-		Inventory struct {
-			Entries []fluxInventoryEntry `json:"entries"`
-		} `json:"inventory"`
-	} `json:"status"`
+	Metadata fluxMetadata            `json:"metadata"`
+	Spec     fluxKustomizationSpec   `json:"spec"`
+	Status   fluxKustomizationStatus `json:"status"`
 }
 
 type fluxInventoryEntry struct {
@@ -40,14 +50,13 @@ type fluxGitRepoList struct {
 	Items []fluxGitRepo `json:"items"`
 }
 
+type fluxGitRepoSpec struct {
+	URL string `json:"url"`
+}
+
 type fluxGitRepo struct {
-	Metadata struct {
-		Name      string `json:"name"`
-		Namespace string `json:"namespace"`
-	} `json:"metadata"`
-	Spec struct {
-		URL string `json:"url"`
-	} `json:"spec"`
+	Metadata fluxMetadata   `json:"metadata"`
+	Spec     fluxGitRepoSpec `json:"spec"`
 }
 
 // discoverFlux checks for Flux CRDs and parses Kustomization + GitRepository resources.

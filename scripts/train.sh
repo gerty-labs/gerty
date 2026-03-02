@@ -18,8 +18,8 @@ DATASET="ml/dataset/data/training_data.jsonl"
 CONFIG="ml/training/configs/default.yaml"
 
 # Check dataset exists
-if [ ! -f "$DATASET" ]; then
-    echo "ERROR: Dataset not found at $DATASET"
+if [[ ! -f "$DATASET" ]]; then
+    echo "ERROR: Dataset not found at $DATASET" >&2
     echo ""
     echo "Generate it first:"
     echo "  python3 ml/dataset/generate_synthetic.py"
@@ -34,7 +34,7 @@ echo "Config:  $CONFIG"
 echo ""
 
 # Optional: dry-run first
-if [ "${DRY_RUN:-}" = "1" ]; then
+if [[ "${DRY_RUN:-}" = "1" ]]; then
     echo "--- Dry Run ---"
     python3 ml/training/finetune_lora.py --config "$CONFIG" --dry-run
     exit 0

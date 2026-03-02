@@ -74,10 +74,11 @@ Service account name.
 Agent image reference.
 */}}
 {{- define "k8s-sage.agent.image" -}}
+{{- $tag := .Values.image.tag | default .Chart.AppVersion }}
 {{- if .Values.image.registry }}
-{{- printf "%s/%s:%s" .Values.image.registry .Values.agent.image.repository (.Values.image.tag | default "latest") }}
+{{- printf "%s/%s:%s" .Values.image.registry .Values.agent.image.repository $tag }}
 {{- else }}
-{{- printf "%s:%s" .Values.agent.image.repository (.Values.image.tag | default "latest") }}
+{{- printf "%s:%s" .Values.agent.image.repository $tag }}
 {{- end }}
 {{- end }}
 
@@ -85,9 +86,10 @@ Agent image reference.
 Server image reference.
 */}}
 {{- define "k8s-sage.server.image" -}}
+{{- $tag := .Values.image.tag | default .Chart.AppVersion }}
 {{- if .Values.image.registry }}
-{{- printf "%s/%s:%s" .Values.image.registry .Values.server.image.repository (.Values.image.tag | default "latest") }}
+{{- printf "%s/%s:%s" .Values.image.registry .Values.server.image.repository $tag }}
 {{- else }}
-{{- printf "%s:%s" .Values.server.image.repository (.Values.image.tag | default "latest") }}
+{{- printf "%s:%s" .Values.server.image.repository $tag }}
 {{- end }}
 {{- end }}

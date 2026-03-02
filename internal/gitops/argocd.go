@@ -12,20 +12,28 @@ type argoAppList struct {
 	Items []argoApp `json:"items"`
 }
 
+type argoMetadata struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+type argoSource struct {
+	RepoURL string `json:"repoURL"`
+	Path    string `json:"path"`
+}
+
+type argoSpec struct {
+	Source argoSource `json:"source"`
+}
+
+type argoStatus struct {
+	Resources []argoResource `json:"resources"`
+}
+
 type argoApp struct {
-	Metadata struct {
-		Name      string `json:"name"`
-		Namespace string `json:"namespace"`
-	} `json:"metadata"`
-	Spec struct {
-		Source struct {
-			RepoURL string `json:"repoURL"`
-			Path    string `json:"path"`
-		} `json:"source"`
-	} `json:"spec"`
-	Status struct {
-		Resources []argoResource `json:"resources"`
-	} `json:"status"`
+	Metadata argoMetadata `json:"metadata"`
+	Spec     argoSpec     `json:"spec"`
+	Status   argoStatus   `json:"status"`
 }
 
 type argoResource struct {

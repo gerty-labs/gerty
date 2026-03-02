@@ -49,7 +49,7 @@ case "${LOAD_TOOL}" in
         echo "=== Burst: curl loop (${DURATION}s) ==="
         END=$((SECONDS + DURATION))
         REQUESTS=0
-        while [ $SECONDS -lt $END ]; do
+        while [[ $SECONDS -lt $END ]]; do
             # Fire 10 concurrent requests.
             for i in $(seq 1 10); do
                 curl -s -o /dev/null "${TARGET}" &
@@ -60,6 +60,10 @@ case "${LOAD_TOOL}" in
             sleep 0.5
         done
         echo "Completed ${REQUESTS} requests in ${DURATION}s"
+        ;;
+    *)
+        echo "Unknown load tool: ${LOAD_TOOL}" >&2
+        exit 1
         ;;
 esac
 

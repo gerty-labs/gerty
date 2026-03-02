@@ -3,7 +3,7 @@ fullnameOverride: ""
 
 image:
   registry: ""
-  tag: "latest"
+  tag: ""  # defaults to Chart.AppVersion
   pullPolicy: IfNotPresent
 
 agent:

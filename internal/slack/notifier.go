@@ -18,8 +18,8 @@ const (
 	dedupWindow = 7 * 24 * time.Hour
 )
 
-// ReportSource provides cluster report data. Implemented by server.Aggregator.
-type ReportSource interface {
+// ClusterReporter provides cluster report data. Implemented by server.Aggregator.
+type ClusterReporter interface {
 	ClusterReport() models.ClusterReport
 }
 
@@ -34,7 +34,7 @@ type Config struct {
 // Notifier periodically checks for recommendations and sends Slack notifications.
 type Notifier struct {
 	webhook  *WebhookClient
-	source   ReportSource
+	source   ClusterReporter
 	engine   *rules.Engine
 	config   Config
 	seen     map[string]time.Time // key → last notified time
@@ -43,7 +43,7 @@ type Notifier struct {
 }
 
 // NewNotifier creates a Notifier that sends recommendation digests to Slack.
-func NewNotifier(config Config, source ReportSource, engine *rules.Engine) *Notifier {
+func NewNotifier(config Config, source ClusterReporter, engine *rules.Engine) *Notifier {
 	interval := config.DigestInterval
 	if interval == 0 {
 		interval = defaultDigestInterval

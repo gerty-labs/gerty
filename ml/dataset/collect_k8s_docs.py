@@ -159,7 +159,7 @@ def extract_sections(html: str) -> list[dict]:
     raise NotImplementedError("Section extraction not yet implemented — scaffold only")
 
 
-def section_to_pairs(section: dict, topic: str, source_url: str) -> list[TrainingPair]:
+def section_to_pairs(section: dict, _topic: str, _source_url: str) -> list[TrainingPair]:
     """Transform a documentation section into instruction-tuning pairs.
 
     Each section generates 3-5 pairs covering:
@@ -175,8 +175,6 @@ def section_to_pairs(section: dict, topic: str, source_url: str) -> list[Trainin
     Returns:
         List of TrainingPair objects.
     """
-    pairs = []
-
     # TODO: Implement transformation logic.
     # For each section:
     #   1. Generate a conceptual question about the section content
@@ -199,7 +197,6 @@ def section_to_pairs(section: dict, topic: str, source_url: str) -> list[Trainin
     # pairs.append(pair)
 
     raise NotImplementedError("Pair generation not yet implemented — scaffold only")
-    return pairs
 
 
 def collect_all(output_path: Path) -> None:

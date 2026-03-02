@@ -52,17 +52,13 @@ func ParseRecommendation(raw string) (*SLMOutput, error) {
 			if err2 := json.Unmarshal([]byte(matches[1]), &output); err2 != nil {
 				return nil, fmt.Errorf("parsing JSON from code block: %w", err2)
 			}
-		} else {
+		} else if start, end := strings.Index(raw, "{"), strings.LastIndex(raw, "}"); start >= 0 && end > start {
 			// Try to find any JSON object in the text
-			start := strings.Index(raw, "{")
-			end := strings.LastIndex(raw, "}")
-			if start >= 0 && end > start {
-				if err2 := json.Unmarshal([]byte(raw[start:end+1]), &output); err2 != nil {
-					return nil, fmt.Errorf("parsing SLM output as JSON: %w", err)
-				}
-			} else {
-				return nil, fmt.Errorf("no JSON object found in SLM response")
+			if err2 := json.Unmarshal([]byte(raw[start:end+1]), &output); err2 != nil {
+				return nil, fmt.Errorf("parsing SLM output as JSON: %w", err)
 			}
+		} else {
+			return nil, fmt.Errorf("no JSON object found in SLM response")
 		}
 	}
 

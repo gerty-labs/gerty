@@ -180,19 +180,6 @@ class StackExchangeClient:
 
         TODO: Implement with requests library.
         """
-        # url = f"{SE_API_BASE}/questions/{question_id}/answers"
-        # params = {
-        #     "order": "desc",
-        #     "sort": "votes",
-        #     "site": "stackoverflow",
-        #     "filter": "withbody",
-        #     "pagesize": 5,  # Top 5 answers only
-        # }
-        # if self.api_key:
-        #     params["key"] = self.api_key
-        #
-        # resp = requests.get(url, params=params, timeout=30)
-        # return resp.json().get("items", [])
         raise NotImplementedError("Stack Exchange API client not yet implemented — scaffold only")
 
 
