@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-overprovisioned
+  labels:
+    app: nginx-overprovisioned
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx-overprovisioned
+  template:
+    metadata:
+      labels:
+        app: nginx-overprovisioned
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          ports:
+            - containerPort: 80

@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "k8s-sage.fullname" . }}-agent
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "k8s-sage.agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "k8s-sage.agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "k8s-sage.agent.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "k8s-sage.serviceAccountName" . }}
+      automountServiceAccountToken: true  # Agent needs SA token for kubelet access
+      {{- with .Values.agent.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agent.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: {{ include "k8s-sage.agent.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 9101
+              protocol: TCP
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: KUBELET_URL
+              value: "https://$(NODE_NAME):10250"
+            - name: SERVER_URL
+              value: "http://{{ include "k8s-sage.fullname" . }}-server:{{ .Values.server.service.port }}"
+            - name: PUSH_INTERVAL
+              value: {{ .Values.agent.pushInterval | quote }}
+          resources:
+            requests:
+              cpu: {{ .Values.agent.resources.requests.cpu }}
+              memory: {{ .Values.agent.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.agent.resources.limits.cpu }}
+              memory: {{ .Values.agent.resources.limits.memory }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

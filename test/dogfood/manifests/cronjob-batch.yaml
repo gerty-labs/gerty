@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: batch-worker
+  labels:
+    app: batch-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: batch-worker
+  template:
+    metadata:
+      labels:
+        app: batch-worker
+    spec:
+      containers:
+        - name: batch
+          image: polinux/stress-ng
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              while true; do
+                echo "$(date): starting batch burst"
+                stress-ng --cpu 2 --timeout 30s
+                echo "$(date): burst done, sleeping"
+                sleep 270
+              done
+          resources:
+            requests:
+              cpu: "2"
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 2Gi

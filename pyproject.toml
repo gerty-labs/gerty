@@ -1,0 +1,45 @@
+[project]
+name = "k8s-sage-ml"
+version = "0.1.0"
+description = "ML training pipeline for k8s-sage SLM"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+train = [
+    "torch>=2.1",
+    "transformers>=4.40",
+    "peft>=0.10",
+    "trl>=0.8",
+    "datasets>=2.18",
+    "bitsandbytes>=0.43",
+    "accelerate>=0.28",
+    "mamba-ssm>=2.0",
+    "causal-conv1d>=1.2",
+    "wandb>=0.16",
+    "pyyaml>=6.0",
+]
+eval = [
+    "scikit-learn>=1.4",
+    "rouge-score>=0.1",
+    "nltk>=3.8",
+]
+lint = [
+    "ruff>=0.3",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# Training data generators have long inline string templates
+"ml/dataset/generate_expert_pairs.py" = ["E501"]
+"ml/dataset/generate_k8s_docs_pairs.py" = ["E501"]
+"ml/dataset/generate_vpa_pairs.py" = ["E501"]
+"ml/dataset/generate_synthetic.py" = ["E501"]
+# Training scripts use forward-reference type hints and lambdas for inference dispatch
+"ml/training/finetune_lora.py" = ["F821"]
+"ml/training/eval.py" = ["E501", "E731"]
