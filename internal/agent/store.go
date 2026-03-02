@@ -371,47 +371,30 @@ func (s *Store) GetAggregates() map[string][]models.AggregatedMetrics {
 	return result
 }
 
-// GetContainerSummary returns a single aggregate over all available data for a container.
-func (s *Store) GetContainerSummary(key string) (models.AggregatedMetrics, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	ts, exists := s.containers[key]
-	if !exists {
-		return models.AggregatedMetrics{}, false
-	}
-
+// mergedSummary computes a single merged bucket over all data for a container.
+// Caller must hold at least a read lock.
+func (ts *containerTimeSeries) mergedSummary(now time.Time) (bucket, bool) {
 	var allBuckets []bucket
 	allBuckets = append(allBuckets, ts.coarseBuckets...)
 	allBuckets = append(allBuckets, ts.fineBuckets...)
 
 	if len(ts.rawSamples) > 0 {
-		now := s.now()
 		allBuckets = append(allBuckets, aggregateSamples(ts.rawSamples, now.Add(-rawBufferDuration), rawBufferDuration))
 	}
 
 	if len(allBuckets) == 0 {
-		return models.AggregatedMetrics{}, false
+		return bucket{}, false
 	}
 
 	merged := allBuckets[0]
 	for _, b := range allBuckets[1:] {
 		merged = mergeTwo(merged, b)
 	}
-
-	return bucketToAggregated(ts, merged), true
+	return merged, true
 }
 
-// GetContainerMeta returns metadata for a container (requests, limits, etc).
-func (s *Store) GetContainerMeta(key string) (ContainerMeta, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	ts, exists := s.containers[key]
-	if !exists {
-		return ContainerMeta{}, false
-	}
-
+// meta returns a ContainerMeta snapshot. Caller must hold at least a read lock.
+func (ts *containerTimeSeries) meta() ContainerMeta {
 	return ContainerMeta{
 		PodName:          ts.podName,
 		PodNamespace:     ts.podNamespace,
@@ -424,7 +407,70 @@ func (s *Store) GetContainerMeta(key string) (ContainerMeta, bool) {
 		QoSClass:         ts.qosClass,
 		OwnerKind:        ts.ownerKind,
 		OwnerName:        ts.ownerName,
-	}, true
+	}
+}
+
+// dataWindow computes the time span of available data. Caller must hold at least a read lock.
+func (ts *containerTimeSeries) dataWindow() time.Duration {
+	var earliest, latest time.Time
+
+	if len(ts.coarseBuckets) > 0 {
+		earliest = ts.coarseBuckets[0].start
+		latest = ts.coarseBuckets[len(ts.coarseBuckets)-1].end
+	}
+
+	if len(ts.fineBuckets) > 0 {
+		if earliest.IsZero() || ts.fineBuckets[0].start.Before(earliest) {
+			earliest = ts.fineBuckets[0].start
+		}
+		if ts.fineBuckets[len(ts.fineBuckets)-1].end.After(latest) {
+			latest = ts.fineBuckets[len(ts.fineBuckets)-1].end
+		}
+	}
+
+	if len(ts.rawSamples) > 0 {
+		if earliest.IsZero() || ts.rawSamples[0].timestamp.Before(earliest) {
+			earliest = ts.rawSamples[0].timestamp
+		}
+		last := ts.rawSamples[len(ts.rawSamples)-1].timestamp
+		if last.After(latest) {
+			latest = last
+		}
+	}
+
+	if earliest.IsZero() {
+		return 0
+	}
+	return latest.Sub(earliest)
+}
+
+// GetContainerSummary returns a single aggregate over all available data for a container.
+func (s *Store) GetContainerSummary(key string) (models.AggregatedMetrics, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ts, exists := s.containers[key]
+	if !exists {
+		return models.AggregatedMetrics{}, false
+	}
+
+	merged, ok := ts.mergedSummary(s.now())
+	if !ok {
+		return models.AggregatedMetrics{}, false
+	}
+	return bucketToAggregated(ts, merged), true
+}
+
+// GetContainerMeta returns metadata for a container (requests, limits, etc).
+func (s *Store) GetContainerMeta(key string) (ContainerMeta, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ts, exists := s.containers[key]
+	if !exists {
+		return ContainerMeta{}, false
+	}
+	return ts.meta(), true
 }
 
 // ContainerMeta holds non-metric metadata about a container.
@@ -463,38 +509,7 @@ func (s *Store) DataWindow(key string) time.Duration {
 	if !exists {
 		return 0
 	}
-
-	var earliest, latest time.Time
-
-	if len(ts.coarseBuckets) > 0 {
-		earliest = ts.coarseBuckets[0].start
-		latest = ts.coarseBuckets[len(ts.coarseBuckets)-1].end
-	}
-
-	if len(ts.fineBuckets) > 0 {
-		if earliest.IsZero() || ts.fineBuckets[0].start.Before(earliest) {
-			earliest = ts.fineBuckets[0].start
-		}
-		if ts.fineBuckets[len(ts.fineBuckets)-1].end.After(latest) {
-			latest = ts.fineBuckets[len(ts.fineBuckets)-1].end
-		}
-	}
-
-	if len(ts.rawSamples) > 0 {
-		if earliest.IsZero() || ts.rawSamples[0].timestamp.Before(earliest) {
-			earliest = ts.rawSamples[0].timestamp
-		}
-		last := ts.rawSamples[len(ts.rawSamples)-1].timestamp
-		if last.After(latest) {
-			latest = last
-		}
-	}
-
-	if earliest.IsZero() {
-		return 0
-	}
-
-	return latest.Sub(earliest)
+	return ts.dataWindow()
 }
 
 // ContainerSnapshot holds a consistent point-in-time snapshot of a container's
@@ -517,70 +532,15 @@ func (s *Store) GetContainerSnapshot(key string) ContainerSnapshot {
 		return ContainerSnapshot{}
 	}
 
-	// Compute summary.
-	var allBuckets []bucket
-	allBuckets = append(allBuckets, ts.coarseBuckets...)
-	allBuckets = append(allBuckets, ts.fineBuckets...)
-
-	if len(ts.rawSamples) > 0 {
-		now := s.now()
-		allBuckets = append(allBuckets, aggregateSamples(ts.rawSamples, now.Add(-rawBufferDuration), rawBufferDuration))
-	}
-
-	if len(allBuckets) == 0 {
+	merged, ok := ts.mergedSummary(s.now())
+	if !ok {
 		return ContainerSnapshot{}
 	}
 
-	merged := allBuckets[0]
-	for _, b := range allBuckets[1:] {
-		merged = mergeTwo(merged, b)
-	}
-
-	// Compute data window.
-	var earliest, latest time.Time
-	if len(ts.coarseBuckets) > 0 {
-		earliest = ts.coarseBuckets[0].start
-		latest = ts.coarseBuckets[len(ts.coarseBuckets)-1].end
-	}
-	if len(ts.fineBuckets) > 0 {
-		if earliest.IsZero() || ts.fineBuckets[0].start.Before(earliest) {
-			earliest = ts.fineBuckets[0].start
-		}
-		if ts.fineBuckets[len(ts.fineBuckets)-1].end.After(latest) {
-			latest = ts.fineBuckets[len(ts.fineBuckets)-1].end
-		}
-	}
-	if len(ts.rawSamples) > 0 {
-		if earliest.IsZero() || ts.rawSamples[0].timestamp.Before(earliest) {
-			earliest = ts.rawSamples[0].timestamp
-		}
-		last := ts.rawSamples[len(ts.rawSamples)-1].timestamp
-		if last.After(latest) {
-			latest = last
-		}
-	}
-
-	var dataWindow time.Duration
-	if !earliest.IsZero() {
-		dataWindow = latest.Sub(earliest)
-	}
-
 	return ContainerSnapshot{
-		Summary: bucketToAggregated(ts, merged),
-		Meta: ContainerMeta{
-			PodName:          ts.podName,
-			PodNamespace:     ts.podNamespace,
-			ContainerName:    ts.containerName,
-			CPURequestMillis: ts.cpuRequestMillis,
-			CPULimitMillis:   ts.cpuLimitMillis,
-			MemRequestBytes:  ts.memRequestBytes,
-			MemLimitBytes:    ts.memLimitBytes,
-			RestartCount:     ts.restartCount,
-			QoSClass:         ts.qosClass,
-			OwnerKind:        ts.ownerKind,
-			OwnerName:        ts.ownerName,
-		},
-		DataWindow: dataWindow,
+		Summary:    bucketToAggregated(ts, merged),
+		Meta:       ts.meta(),
+		DataWindow: ts.dataWindow(),
 		OK:         true,
 	}
 }
