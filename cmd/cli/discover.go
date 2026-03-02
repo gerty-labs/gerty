@@ -11,12 +11,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// allowedCommands is the set of binaries that execRunner will execute.
+var allowedCommands = map[string]bool{
+	"kubectl": true,
+}
+
 // execRunner implements gitops.CommandRunner using os/exec.
+// It restricts execution to allowedCommands to prevent command injection.
 type execRunner struct{}
 
 func (e *execRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...) // nosemgrep: dangerous-exec-command — name is hardcoded at call sites (kubectl)
-	return cmd.Output()
+	if !allowedCommands[name] {
+		return nil, fmt.Errorf("command %q not in allowlist", name)
+	}
+	return exec.CommandContext(ctx, name, args...).Output()
 }
 
 func discoverCmd() *cobra.Command {
