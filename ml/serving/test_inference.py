@@ -16,7 +16,20 @@ import argparse
 import json
 import sys
 import time
+import urllib.parse
 import urllib.request
+
+_ALLOWED_SCHEMES = {"http", "https"}
+
+
+def _safe_urlopen(req, **kwargs):
+    """Wrapper around urlopen that rejects non-HTTP schemes (e.g. file://)."""
+    url = req.full_url if isinstance(req, urllib.request.Request) else req
+    scheme = urllib.parse.urlparse(url).scheme.lower()
+    if scheme not in _ALLOWED_SCHEMES:
+        raise ValueError(f"URL scheme {scheme!r} not allowed, must be http or https")
+    return urllib.request.urlopen(req, **kwargs)
+
 
 REQUIRED_FIELDS = [
     "cpu_request",
@@ -118,7 +131,7 @@ def send_prompt(url: str, system: str, user: str, max_tokens: int = 512) -> tupl
     )
 
     start = time.monotonic()
-    with urllib.request.urlopen(req, timeout=30) as resp:  # nosemgrep: dynamic-urllib-use-detected
+    with _safe_urlopen(req, timeout=30) as resp:
         result = json.loads(resp.read())
     latency = (time.monotonic() - start) * 1000
 
@@ -179,7 +192,7 @@ def check_health(url: str) -> bool:
     """Check if llama.cpp server is reachable."""
     try:
         req = urllib.request.Request(f"{url}/health")
-        with urllib.request.urlopen(req, timeout=5) as resp:  # nosemgrep: dynamic-urllib-use-detected
+        with _safe_urlopen(req, timeout=5) as resp:
             return resp.status == 200
     except Exception:
         return False

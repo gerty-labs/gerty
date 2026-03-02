@@ -36,6 +36,17 @@ def load_test_set(path: str) -> list[dict]:
     return examples
 
 
+def _safe_urlopen(req, **kwargs):
+    """Wrapper around urlopen that rejects non-HTTP schemes (e.g. file://)."""
+    import urllib.parse
+
+    url = req.full_url if isinstance(req, urllib.request.Request) else req
+    scheme = urllib.parse.urlparse(url).scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise ValueError(f"URL scheme {scheme!r} not allowed, must be http or https")
+    return urllib.request.urlopen(req, **kwargs)
+
+
 def infer_llama_cpp(url: str, prompt: str, max_tokens: int = 512) -> tuple[str, float]:
     """Run inference via llama.cpp /completion endpoint. Returns (text, latency_ms)."""
     import urllib.request
@@ -54,7 +65,7 @@ def infer_llama_cpp(url: str, prompt: str, max_tokens: int = 512) -> tuple[str, 
     )
 
     start = time.monotonic()
-    with urllib.request.urlopen(req, timeout=30) as resp:  # nosemgrep: dynamic-urllib-use-detected
+    with _safe_urlopen(req, timeout=30) as resp:
         result = json.loads(resp.read())
     latency = (time.monotonic() - start) * 1000
 
