@@ -39,6 +39,16 @@ spec:
             - name: SLM_URL
               value: "http://{{ include "k8s-sage.fullname" . }}-slm:8080"
             {{- end }}
+            {{- if .Values.slack.enabled }}
+            - name: SLACK_WEBHOOK_URL
+              value: {{ .Values.slack.webhookURL | quote }}
+            - name: SLACK_CHANNEL
+              value: {{ .Values.slack.channel | quote }}
+            - name: SLACK_DIGEST_INTERVAL
+              value: {{ .Values.slack.digestInterval | quote }}
+            - name: SLACK_MIN_SEVERITY
+              value: {{ .Values.slack.minSeverity | quote }}
+            {{- end }}
           resources:
             requests:
               cpu: {{ .Values.server.resources.requests.cpu }}

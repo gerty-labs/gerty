@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gregorytcarroll/k8s-sage/internal/rules"
 	"github.com/gregorytcarroll/k8s-sage/internal/server"
+	"github.com/gregorytcarroll/k8s-sage/internal/slack"
 	"github.com/gregorytcarroll/k8s-sage/internal/slm"
 )
 
@@ -39,6 +41,39 @@ func main() {
 
 	done := make(chan struct{})
 	aggregator.StartPruner(done)
+
+	// Optional Slack notifier
+	if webhookURL := os.Getenv("SLACK_WEBHOOK_URL"); webhookURL != "" {
+		interval := 1 * time.Hour
+		if raw := os.Getenv("SLACK_DIGEST_INTERVAL"); raw != "" {
+			if parsed, err := time.ParseDuration(raw); err == nil {
+				interval = parsed
+			}
+		}
+		channel := os.Getenv("SLACK_CHANNEL")
+		if channel == "" {
+			channel = "#k8s-sage"
+		}
+		minSeverity := slack.SeverityOptimisation
+		if raw := os.Getenv("SLACK_MIN_SEVERITY"); raw != "" {
+			minSeverity = slack.Severity(raw)
+		}
+
+		notifier := slack.NewNotifier(slack.Config{
+			WebhookURL:     webhookURL,
+			Channel:        channel,
+			DigestInterval: interval,
+			MinSeverity:    minSeverity,
+		}, aggregator, engine)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		go notifier.Run(ctx)
+		go func() {
+			<-done
+			cancel()
+		}()
+		slog.Info("Slack notifier enabled", "channel", channel, "interval", interval)
+	}
 
 	api := server.NewAPI(aggregator, engine, analyzer)
 	mux := http.NewServeMux()

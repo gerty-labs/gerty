@@ -71,3 +71,10 @@ serviceAccount:
 grafana:
   dashboards:
     enabled: false
+
+slack:
+  enabled: false
+  webhookURL: ""
+  channel: "#k8s-sage"
+  digestInterval: "1h"
+  minSeverity: "optimisation"
