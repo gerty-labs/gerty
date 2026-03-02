@@ -74,8 +74,8 @@ k8s-sage/
 │
 ├── cmd/
 │   ├── agent/main.go              # DaemonSet entrypoint
-│   ├── server/main.go             # Server entrypoint
-│   └── cli/                       # CLI entrypoint + subcommands
+│   ├── server/main.go             # Server entrypoint (+ Slack notifier bootstrap)
+│   └── cli/                       # CLI: report, recommend, workloads, annotate, discover
 │
 ├── internal/
 │   ├── agent/                     # Collector, store, reporter, pusher
@@ -91,6 +91,8 @@ k8s-sage/
 │   │   ├── client.go              # llama.cpp HTTP client
 │   │   ├── prompts.go             # Prompt construction from workload metrics
 │   │   └── parser.go              # JSON response parsing + validation
+│   ├── slack/                     # Slack webhook notifier + Block Kit messages
+│   ├── gitops/                    # ArgoCD + Flux workload discovery
 │   └── models/                    # Shared types (metrics, reports, recommendations)
 │
 ├── ml/
@@ -113,7 +115,9 @@ k8s-sage/
 │       ├── Modelfile              # Model parameters
 │       └── test_inference.py      # 5-scenario smoke test
 │
-├── deploy/helm/k8s-sage/          # Helm chart (agent, server, SLM)
+├── deploy/
+│   ├── helm/k8s-sage/             # Helm chart (agent, server, SLM, Grafana, Slack)
+│   └── grafana/                   # Standalone Grafana dashboard
 │
 ├── test/
 │   ├── backtest/                  # 52 scenario regression tests
@@ -163,8 +167,10 @@ k8s-sage/
 
 ```bash
 make build            # Build all Go binaries
-make test             # Unit tests
-make lint             # Go vet + staticcheck + ruff
+make test             # Unit tests (go test -p 2 -timeout 120s ./...)
+make lint             # Go vet + staticcheck + ruff + helm lint
+make lint-python      # ruff check ml/
+make lint-helm        # helm lint deploy/helm/k8s-sage/
 make docker-build     # Build container images
 make dev-cluster      # Spin up kind cluster
 make dev-deploy       # Deploy to kind via Helm
@@ -190,21 +196,27 @@ The curated K8s efficiency dataset doesn't exist anywhere. Sources include: K8s 
 
 ## Project Status
 
-67 commits. All development work complete. See `docs/ARCHITECTURE.md` for detailed status.
+73 commits. See `docs/ARCHITECTURE.md` for detailed status.
 
 ### Complete
 - Agent, server, rules engine (with L1 safety fixes), CLI, Helm chart, CI/CD
 - ML pipeline: 6,982 training pairs, QLoRA script, merge/quantise, eval, serving
 - Go SLM integration: client, prompts, parser (21 tests), L1+L2 analyzer
 - Dogfood workloads (8 archetypes) with validation scripts
+- CI: ruff + helm lint in pipeline; Makefile lint-python/lint-helm targets
+- Grafana dashboard (Infinity datasource) + Helm ConfigMap
+- `sage annotate` + `sage discover` CLI subcommands
+- Slack notifier scaffold (webhook, Block Kit, severity/dedup)
+- GitOps discovery (ArgoCD + Flux)
+- Models package tests (30 functions)
 
 ### Next: Training on GPU rig
 - `./scripts/train.sh` — fine-tune Jamba 3B (3-6h on dual 3090)
 - `./scripts/eval_and_deploy.sh` — merge, quantise, evaluate
 - Dogfood v2 (L1) and v3 (with L2)
 
-### Future: Post-model validation
-- Slack integration, Grafana dashboards, GitOps PR creation
+### Remaining
+- PR creation flow, KWOK scale testing, marketplace listing
 
 ## Context for Claude Code
 

@@ -345,17 +345,22 @@ Above + llama.cpp Deployment running k8s-sage SLM. Additional overhead: ~2.5Gi f
 - ML pipeline: 6,982 training pairs, QLoRA training script, merge/quantise, evaluation, serving
 - Go SLM integration: client, prompts, parser (21 tests), L1+L2 analyzer orchestrator
 - 8 dogfood workload archetypes with validation scripts
+- CI: Python ruff lint + Helm lint in CI pipeline
+- Grafana dashboard (Infinity datasource, 5 panels) + Helm ConfigMap for sidecar auto-import
+- `sage annotate` CLI subcommand for GitOps source annotations
+- Slack integration scaffold: ticker-based notifier, Block Kit messages, severity/dedup, Helm config
+- GitOps discovery: ArgoCD Application + Flux Kustomization parsing, `sage discover` CLI subcommand
+- Models package test suite (30 tests)
 
 ### Ready (blocked on GPU)
 - Fine-tune Jamba 3B on Threadripper + dual RTX 3090 (`./scripts/train.sh`)
 - Merge + GGUF quantise + evaluate (`./scripts/eval_and_deploy.sh`)
 - Dogfood v2 (L1 with fixes) and v3 (with L2)
 
-### Designed (post-model)
-- Slack integration (see [UX_RECOMMENDATION_FLOW.md](UX_RECOMMENDATION_FLOW.md))
-- Grafana dashboards
-- ArgoCD/Flux GitOps auto-detection
+### Remaining
 - PR creation flow for automated right-sizing
+- KWOK scale testing
+- Marketplace listing
 
 ---
 
@@ -370,6 +375,12 @@ Above + llama.cpp Deployment running k8s-sage SLM. Additional overhead: ~2.5Gi f
 | `internal/slm/client.go` | llama.cpp HTTP client |
 | `internal/slm/prompts.go` | Prompt construction from workload metrics |
 | `internal/slm/parser.go` | Structured JSON response parsing |
+| `internal/slack/notifier.go` | Slack digest notifier (ticker loop) |
+| `internal/slack/messages.go` | Block Kit message builders |
+| `internal/gitops/discover.go` | ArgoCD + Flux workload discovery |
+| `cmd/cli/annotate.go` | `sage annotate` — GitOps source annotations |
+| `cmd/cli/discover.go` | `sage discover` — auto-detect GitOps mappings |
+| `deploy/helm/k8s-sage/files/k8s-sage-dashboard.json` | Grafana dashboard |
 | `ml/training/finetune_lora.py` | QLoRA fine-tuning (SFTTrainer) |
 | `ml/dataset/generate_synthetic.py` | Synthetic training pair generator |
 | `deploy/helm/k8s-sage/values.yaml` | Deployment configuration |

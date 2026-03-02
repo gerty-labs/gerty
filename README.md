@@ -1,6 +1,6 @@
 # k8s-sage
 
-Kubernetes resource efficiency platform. Lightweight in-cluster agents identify waste; a deterministic rules engine generates right-sizing recommendations.
+Kubernetes resource efficiency platform. Lightweight in-cluster agents collect metrics and identify waste. A deterministic rules engine classifies workloads and generates right-sizing recommendations. An optional fine-tuned SLM adds context-aware explanations.
 
 ```
 ┌─────────────────────────────────────┐
@@ -17,6 +17,9 @@ Kubernetes resource efficiency platform. Lightweight in-cluster agents identify 
 │  │  ┌────────────┐  │               │
 │  │  │Rules Engine│  │               │
 │  │  └────────────┘  │               │
+│  │  ┌────────────┐  │               │
+│  │  │ SLM (opt.) │  │               │
+│  │  └────────────┘  │               │
 │  └────────┬─────────┘               │
 │           ▼                         │
 │       REST API (:8080)              │
@@ -27,166 +30,152 @@ Kubernetes resource efficiency platform. Lightweight in-cluster agents identify 
      └────────────┘
 ```
 
-## What It Does
+## Components
 
-- **Agents** (DaemonSet, 50Mi/50m per node) scrape the kubelet Summary API (`/stats/summary`) every 30s for usage metrics, enrich with resource requests/limits from the kubelet `/pods` endpoint, compute waste per container (`request - P95 usage`), and push `NodeReport` JSON to the server every 5 minutes.
-- **Server** aggregates reports cluster-wide, groups by owner (Deployment, StatefulSet, etc.), and runs a deterministic rules engine that classifies workloads (steady, burstable, batch, idle) and generates right-sizing recommendations with confidence scores and risk levels.
-- **CLI** queries the server API and displays reports and recommendations as tables or JSON.
+**Agents** (DaemonSet, 50Mi/50m per node) scrape the kubelet Summary API every 30s, compute per-container waste, and push `NodeReport` JSON to the server every 5 minutes.
+
+**Server** aggregates reports cluster-wide, groups by owner (Deployment, StatefulSet, etc.), and runs the rules engine. Classifies workloads as steady, burstable, batch, idle, or anomalous, then generates right-sizing recommendations with confidence scores and risk levels.
+
+**CLI** queries the server API. Subcommands: `report`, `recommend`, `workloads`, `annotate`, `discover`.
+
+**Slack notifier** (optional) sends periodic digest messages with grouped recommendations to a webhook. Configurable severity filter and 7-day dedup.
+
+**Grafana dashboard** (optional) visualises cluster waste, namespace breakdown, top wasting workloads, and recommendations via the Infinity datasource.
 
 ## Quick Start
 
-### Prerequisites
-
-- Go 1.22+
-- Docker (for container images)
-- kind + kubectl (for local testing)
-- Helm 3 (for deployment)
-
-### Build
+Prerequisites: Go 1.22+, Docker, kind + kubectl, Helm 3.
 
 ```bash
-# Go binaries
-go build ./cmd/agent
-go build ./cmd/server
-go build ./cmd/cli
-
-# Container images
-docker build -t k8s-sage-agent:latest -f Dockerfile.agent .
-docker build -t k8s-sage-server:latest -f Dockerfile.server .
+make build                  # Go binaries
+make docker-build           # Container images
+./scripts/kind-cluster.sh   # Create kind cluster
+helm install k8s-sage deploy/helm/k8s-sage --set image.pullPolicy=Never
 ```
 
-### Deploy to kind
+## CLI
 
 ```bash
-# Create cluster and load images
-./scripts/kind-cluster.sh
-
-# Install via Helm
-helm install k8s-sage ./deploy/helm/k8s-sage/ --set image.pullPolicy=Never
-
-# Deploy test workloads
-./test/dogfood/setup-workloads.sh
+sage report                              # Cluster-wide waste report
+sage report --namespace production       # Namespace drill-down
+sage recommend                           # Right-sizing recommendations
+sage recommend --risk LOW                # Filter by risk
+sage workloads                           # List workloads
+sage workloads production/Deployment/api # Workload detail
+sage annotate deployment/api \           # Set GitOps source annotations
+  --repo github.com/acme/manifests \
+  --path apps/api/values.yaml
+sage discover                            # Auto-detect ArgoCD/Flux mappings
+sage report -o json                      # JSON output
 ```
 
-### Run the CLI
-
-```bash
-# Cluster-wide waste report
-sage report
-
-# Namespace drill-down
-sage report --namespace production
-
-# Right-sizing recommendations
-sage recommend
-
-# Filter by risk level
-sage recommend --risk LOW
-
-# List workloads
-sage workloads
-
-# Workload detail
-sage workloads production/Deployment/api-server
-
-# JSON output (pipe to jq, etc.)
-sage report -o json
-```
-
-### Configuration
-
-The CLI resolves the server address in order: `--server` flag > `SAGE_SERVER` env var > `http://localhost:8080`.
-
-```bash
-export SAGE_SERVER=http://sage-server.k8s-sage.svc:8080
-sage report
-```
+Server address: `--server` flag > `SAGE_SERVER` env > `http://localhost:8080`.
 
 ## API
 
-All responses are wrapped in an envelope:
-
-```json
-{"status": "ok", "data": {...}, "timestamp": "2026-03-01T12:00:00Z"}
-```
+All responses wrapped in `{"status": "ok"|"error", "data": ..., "timestamp": "..."}`.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/healthz` | Health check |
-| GET | `/readyz` | Ready check (503 until agent data received) |
+| GET | `/readyz` | Ready check |
 | POST | `/api/v1/ingest` | Agent pushes NodeReport |
-| GET | `/api/v1/report` | Cluster-wide waste report |
-| GET | `/api/v1/report?namespace=ns` | Namespace-scoped report |
-| GET | `/api/v1/workloads` | All workloads with waste summary |
-| GET | `/api/v1/workloads/{ns}/{kind}/{name}` | Single workload detail |
-| GET | `/api/v1/recommendations` | Right-sizing recommendations |
-| GET | `/api/v1/recommendations?risk=LOW&namespace=ns` | Filtered recommendations |
-| POST | `/api/v1/analyze` | Analyze a specific namespace |
+| GET | `/api/v1/report` | Cluster report (optional `?namespace=`) |
+| GET | `/api/v1/workloads` | All workloads |
+| GET | `/api/v1/workloads/{ns}/{kind}/{name}` | Workload detail |
+| GET | `/api/v1/recommendations` | Recommendations (optional `?risk=&namespace=`) |
+| POST | `/api/v1/analyze` | On-demand analysis |
 
-## Helm Values
+## Helm
 
-Key configuration options:
+```bash
+helm install k8s-sage deploy/helm/k8s-sage
+helm install k8s-sage deploy/helm/k8s-sage --set slm.enabled=true
+helm install k8s-sage deploy/helm/k8s-sage --set grafana.dashboards.enabled=true
+helm install k8s-sage deploy/helm/k8s-sage --set slack.enabled=true --set slack.webhookURL=https://hooks.slack.com/...
+```
 
 | Value | Default | Description |
 |-------|---------|-------------|
-| `agent.resources.requests.cpu` | `50m` | Agent CPU request (hard constraint) |
-| `agent.resources.requests.memory` | `50Mi` | Agent memory request (hard constraint) |
-| `agent.pushInterval` | `5m` | How often agents push reports to the server |
-| `server.replicas` | `1` | Server replica count |
-| `server.resources.requests.memory` | `256Mi` | Server memory request |
-| `server.service.type` | `ClusterIP` | Server service type |
-| `server.service.port` | `8080` | Server service port |
-| `slm.enabled` | `false` | Enable SLM model serving (Phase 2) |
+| `agent.resources.requests.cpu` | `50m` | Agent CPU request |
+| `agent.resources.requests.memory` | `50Mi` | Agent memory request |
+| `agent.pushInterval` | `5m` | Report push interval |
+| `server.replicas` | `1` | Server replicas |
+| `slm.enabled` | `false` | Enable SLM serving |
+| `grafana.dashboards.enabled` | `false` | Deploy Grafana dashboard ConfigMap |
+| `slack.enabled` | `false` | Enable Slack notifications |
+| `slack.webhookURL` | `""` | Slack incoming webhook URL |
+| `slack.channel` | `#k8s-sage` | Slack channel |
+| `slack.digestInterval` | `1h` | Notification interval |
+| `slack.minSeverity` | `optimisation` | Minimum severity to notify |
 
 ## How Recommendations Work
 
-The rules engine classifies each workload into one of four patterns:
-
 | Pattern | Trigger | Strategy |
 |---------|---------|----------|
-| **Steady** | Low variance (CV < 0.3) | Request = P95 + 20% headroom |
-| **Burstable** | Periodic spikes | Request = P50 + 20%, Limit = P99 + 20% |
-| **Batch** | Extreme spike ratios | Request = P50 + 20%, Limit = Max + 20% |
-| **Idle** | < 5% utilisation for 48h+ | Flag for investigation |
+| Steady | CV < 0.3 | Request = P95 * 1.20 |
+| Burstable | Periodic spikes | Request = P50 * 1.20, Limit = P99 * 1.20 |
+| Batch | Extreme spike ratios | Request = P50 * 1.20, Limit = Max * 1.20 |
+| Idle | < 5% utilisation for 48h+ | Flag for investigation |
+| Anomalous | Monotonic memory growth | Flag for investigation |
 
-Confidence scoring accounts for data window duration (7+ days = high confidence) and pattern stability. Risk levels reflect how close recommendations are to observed peaks (P99 for CPU, Max for memory).
-
-Safety invariants enforced:
-- Memory recommendations never go below P99 working set
-- CPU floor: 10m, Memory floor: 4Mi
-- Waste must exceed 10% of request before recommending changes
-
-## Limitations
-
-- **No persistent storage**: Agent and server are in-memory only. Restarting loses historical data. Agents rebuild from the kubelet within 30s; server rebuilds as agents push.
-- **No SLM yet**: The fine-tuned small language model is Phase 2. Current recommendations come from the deterministic rules engine only.
-- **Agent push resets on restart**: The agent pushes reports to the server every 5 minutes. However, the agent's in-memory store is lost on pod restart, so data windows reset. Agents rebuild data from the kubelet within 30s of restart; classification confidence recovers as the data window grows.
-- **No authentication**: The API has no auth. Deploy behind a network policy or service mesh in production.
-- **Single-server**: No HA for the server. A single replica is sufficient for clusters up to 10k pods.
-- **Owner detection**: Relies on `ownerReference` in pod waste reports. Standalone pods (no owner) are treated as their own owner.
+Safety invariants: CPU floor 50m, memory floor 64Mi, memory >= P99 working set * 1.10. Reduction caps: 30% (low confidence), 50% (medium), 75% (high).
 
 ## Project Structure
 
 ```
 k8s-sage/
 ├── cmd/
-│   ├── agent/          # DaemonSet entrypoint (port 9101)
-│   ├── server/         # Server entrypoint (port 8080)
-│   └── cli/            # CLI (cobra)
+│   ├── agent/              # DaemonSet entrypoint
+│   ├── server/             # Server entrypoint
+│   └── cli/                # CLI (report, recommend, workloads, annotate, discover)
 ├── internal/
-│   ├── agent/          # Collector, store, reporter, pusher
-│   ├── server/         # Aggregator, API handlers
-│   ├── rules/          # Classification + recommendation engine
-│   ├── models/         # Shared types
-│   └── slm/            # SLM client (placeholder)
-├── deploy/helm/        # Helm chart
-├── scripts/            # Dev scripts (kind cluster)
-├── test/dogfood/       # Synthetic workload scripts
-├── Dockerfile.agent    # ~6MB scratch image
-└── Dockerfile.server   # ~6MB scratch image
+│   ├── agent/              # Collector, store, reporter, pusher
+│   ├── server/             # Aggregator, API, analyzer
+│   ├── rules/              # Classification + recommendation engine
+│   ├── models/             # Shared types
+│   ├── slm/                # SLM client (llama.cpp)
+│   ├── slack/              # Slack webhook notifier
+│   └── gitops/             # ArgoCD + Flux discovery
+├── ml/
+│   ├── dataset/            # Training data (6,982 pairs) + generators
+│   ├── training/           # QLoRA fine-tuning, eval, merge/quantise
+│   └── serving/            # llama.cpp config + smoke tests
+├── deploy/
+│   ├── helm/k8s-sage/      # Helm chart
+│   └── grafana/            # Standalone Grafana dashboard
+├── test/
+│   ├── backtest/           # 52 scenario regression tests
+│   ├── safety/             # Safety invariant tests
+│   ├── integration/        # E2E tests
+│   └── dogfood/            # 8 workload archetypes + validation
+├── scripts/                # Dev + training scripts
+└── docs/                   # Architecture, model design, training data
 ```
+
+## Build and Test
+
+```bash
+make build            # Build all Go binaries
+make test             # Unit tests (go test -p 2 -timeout 120s ./...)
+make lint             # go vet + staticcheck + ruff + helm lint
+make lint-python      # ruff check ml/
+make lint-helm        # helm lint deploy/helm/k8s-sage/
+make docker-build     # Container images
+make dev-cluster      # kind cluster
+make dev-deploy       # Helm install to kind
+make backtest         # 52 scenario regression tests
+make test-safety      # Safety invariant tests
+make test-integration # E2E (requires running cluster)
+```
+
+## Limitations
+
+- No persistent storage. Restarting loses historical data. Agents rebuild within 30s; server rebuilds as agents push.
+- No authentication on the API. Deploy behind network policy or service mesh.
+- Single-server, no HA. Sufficient for clusters up to 10k pods.
+- SLM requires separate training run on GPU hardware before use.
 
 ## Licence
 
-Copyright (c) 2026 Gregory Carroll. All rights reserved.
-See [COPYRIGHT](./COPYRIGHT) for details.
+Copyright (c) 2026 Gregory Carroll. All rights reserved. See [COPYRIGHT](./COPYRIGHT).
