@@ -512,3 +512,25 @@ func TestCapReduction(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerateMemoryRecommendation_AnomalousPattern(t *testing.T) {
+	// Anomalous pattern: recommendation preserves current resources with risk=HIGH.
+	memUsage := models.MetricAggregate{
+		P50: 10_485_760, P99: 209_715_200, Max: 220_200_960,
+	}
+
+	rec := GenerateMemoryRecommendation(
+		testOwner, "main", memUsage,
+		1_000_000_000, 2_000_000_000,
+		10080, models.PatternAnomalous,
+	)
+	require.NotNil(t, rec)
+
+	assert.Equal(t, models.PatternAnomalous, rec.Pattern)
+	assert.Equal(t, int64(1_000_000_000), rec.RecommendedReq)
+	assert.Equal(t, int64(2_000_000_000), rec.RecommendedLimit)
+	assert.Equal(t, int64(0), rec.EstSavings)
+	assert.Equal(t, models.RiskHigh, rec.Risk)
+	assert.Equal(t, float64(0), rec.Confidence)
+	assert.Contains(t, rec.Reasoning, "memory leak")
+}

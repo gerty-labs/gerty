@@ -124,6 +124,21 @@ type WorkloadStats struct {
 	DataWindowMinutes float64
 }
 
+// DetectMemoryAnomaly checks if memory usage shows monotonic growth suggesting
+// a memory leak. Uses P50/P99/Max spread as a proxy for growth trend.
+// In a leak: P50 (early average) is low, P99 (recent) is high, Max ≈ P99.
+// In normal: P50 ≈ P99 ≈ Max (stable) or P50 < P99 << Max (spikes).
+func DetectMemoryAnomaly(memUsage models.MetricAggregate) bool {
+	if memUsage.Max <= 0 || memUsage.P50 <= 0 {
+		return false
+	}
+	growthRatio := memUsage.P99 / memUsage.P50
+	maxProximity := memUsage.P99 / memUsage.Max // close to 1.0 means P99≈Max (no headroom)
+
+	// Monotonic growth: P99 is much higher than P50 (growth) AND P99 is close to Max (no drops)
+	return growthRatio >= 2.0 && maxProximity >= 0.85
+}
+
 // ComputeWorkloadStats calculates derived statistics for a container's metrics.
 func ComputeWorkloadStats(cpuUsage models.MetricAggregate, cpuRequestMillis int64, dataWindowMinutes float64) WorkloadStats {
 	pattern := ClassifyWorkload(cpuUsage, cpuRequestMillis, dataWindowMinutes)

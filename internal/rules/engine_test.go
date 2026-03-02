@@ -201,3 +201,44 @@ func TestClampZero(t *testing.T) {
 	assert.Equal(t, float64(0), clampZero(0))
 	assert.Equal(t, float64(42), clampZero(42))
 }
+
+func TestEngine_Analyze_AnomalousPattern(t *testing.T) {
+	engine := NewEngine()
+
+	// CPU is steady, but memory shows leak pattern.
+	input := AnalysisInput{
+		Owner:         models.OwnerReference{Kind: "Deployment", Name: "leaky-app", Namespace: "prod"},
+		ContainerName: "main",
+		CPUUsageMillis: models.MetricAggregate{
+			P50: 200, P95: 220, P99: 250, Max: 300,
+		},
+		CPURequestMillis: 2000,
+		CPULimitMillis:   4000,
+		MemUsageBytes: models.MetricAggregate{
+			P50: 10_485_760,   // 10Mi
+			P95: 150_000_000,  // ~143Mi
+			P99: 209_715_200,  // 200Mi
+			Max: 220_200_960,  // ~210Mi — close to P99
+		},
+		MemRequestBytes:   1_000_000_000,
+		MemLimitBytes:     2_000_000_000,
+		DataWindowMinutes: 10080,
+	}
+
+	result := engine.Analyze(input)
+
+	// Memory anomaly overrides CPU classification.
+	assert.Equal(t, models.PatternAnomalous, result.Pattern)
+
+	// Both recommendations should be investigation-type.
+	require.NotNil(t, result.CPURecommendation)
+	assert.Equal(t, models.PatternAnomalous, result.CPURecommendation.Pattern)
+	assert.Equal(t, models.RiskHigh, result.CPURecommendation.Risk)
+	assert.Equal(t, int64(0), result.CPURecommendation.EstSavings)
+
+	require.NotNil(t, result.MemRecommendation)
+	assert.Equal(t, models.PatternAnomalous, result.MemRecommendation.Pattern)
+	assert.Equal(t, models.RiskHigh, result.MemRecommendation.Risk)
+	assert.Equal(t, int64(0), result.MemRecommendation.EstSavings)
+	assert.Contains(t, result.MemRecommendation.Reasoning, "memory leak")
+}

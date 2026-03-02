@@ -10,6 +10,7 @@ const (
 	PatternBurstable WorkloadPattern = "burstable"
 	PatternBatch     WorkloadPattern = "batch"
 	PatternIdle      WorkloadPattern = "idle"
+	PatternAnomalous WorkloadPattern = "anomalous"
 )
 
 // RiskLevel indicates the risk of applying a recommendation.

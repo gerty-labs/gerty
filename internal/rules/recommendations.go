@@ -121,6 +121,20 @@ func GenerateCPURecommendation(
 			"Batch workload: mostly idle at %.0fm (P50), peaks to %.0fm (max). "+
 				"Request set to %.0fm for scheduling, limit to %.0fm to allow full burst.",
 			cpuUsage.P50, cpuUsage.Max, recReq, recLimit)
+
+	case models.PatternAnomalous:
+		// Anomalous pattern detected (e.g. memory leak). Return investigation
+		// recommendation — do not change CPU resources.
+		return &models.Recommendation{
+			Target: target, Container: containerName, Resource: "cpu",
+			CurrentRequest: currentReqMillis, CurrentLimit: currentLimitMillis,
+			RecommendedReq: currentReqMillis, RecommendedLimit: currentLimitMillis,
+			Pattern: models.PatternAnomalous, Confidence: 0,
+			Reasoning: "Anomalous resource pattern detected (possible memory leak). " +
+				"Investigate before making changes — do not reduce resources until root cause is identified.",
+			EstSavings: 0, Risk: models.RiskHigh,
+			DataWindow: time.Duration(dataWindowMinutes) * time.Minute,
+		}
 	}
 
 	// Apply confidence-gated reduction cap before floors.
@@ -236,6 +250,20 @@ func GenerateMemoryRecommendation(
 				"Recommend %.1fMi request (P99 + %.0f%% headroom) to handle spikes safely.",
 			memUsage.P99/1048576, memUsage.Max/1048576, float64(currentReqBytes)/1048576,
 			recReq/1048576, (headroomBurstableLimit-1)*100)
+
+	case models.PatternAnomalous:
+		// Anomalous pattern detected — never reduce memory. Return investigation recommendation.
+		return &models.Recommendation{
+			Target: target, Container: containerName, Resource: "memory",
+			CurrentRequest: currentReqBytes, CurrentLimit: currentLimitBytes,
+			RecommendedReq: currentReqBytes, RecommendedLimit: currentLimitBytes,
+			Pattern: models.PatternAnomalous, Confidence: 0,
+			Reasoning: fmt.Sprintf("Possible memory leak detected: P50=%.1fMi, P99=%.1fMi, Max=%.1fMi. "+
+				"Memory shows monotonic growth pattern. Investigate before making changes.",
+				memUsage.P50/1048576, memUsage.P99/1048576, memUsage.Max/1048576),
+			EstSavings: 0, Risk: models.RiskHigh,
+			DataWindow: time.Duration(dataWindowMinutes) * time.Minute,
+		}
 	}
 
 	// Memory confidence follows CPU pattern but is slightly more conservative.
@@ -323,6 +351,8 @@ func computeConfidence(stats WorkloadStats) float64 {
 	case models.PatternIdle:
 		// Idle is highly confident — if it's been idle for 48h+ we know.
 		base = math.Min(base, confidenceMaxSteady7d)
+	case models.PatternAnomalous:
+		base = 0.0 // confidence is N/A for anomalous
 	}
 
 	return math.Round(base*100) / 100

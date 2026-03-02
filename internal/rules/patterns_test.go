@@ -246,6 +246,47 @@ func TestIsBatchPattern(t *testing.T) {
 	}
 }
 
+func TestDetectMemoryAnomaly(t *testing.T) {
+	tests := []struct {
+		name     string
+		memUsage models.MetricAggregate
+		want     bool
+	}{
+		{
+			name:     "memory leak — P50 low, P99 high, Max ≈ P99",
+			memUsage: models.MetricAggregate{P50: 10_485_760, P99: 209_715_200, Max: 220_200_960},
+			want:     true, // growthRatio=20 >= 2, maxProximity=0.95 >= 0.85
+		},
+		{
+			name:     "normal stable memory",
+			memUsage: models.MetricAggregate{P50: 104_857_600, P99: 115_343_360, Max: 125_829_120},
+			want:     false, // growthRatio=1.1 < 2
+		},
+		{
+			name:     "sawtooth/GC pattern — Max >> P99",
+			memUsage: models.MetricAggregate{P50: 104_857_600, P99: 209_715_200, Max: 419_430_400},
+			want:     false, // growthRatio=2 but maxProximity=0.5 < 0.85
+		},
+		{
+			name:     "zero Max",
+			memUsage: models.MetricAggregate{P50: 100, P99: 200, Max: 0},
+			want:     false,
+		},
+		{
+			name:     "zero P50",
+			memUsage: models.MetricAggregate{P50: 0, P99: 200, Max: 210},
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectMemoryAnomaly(tt.memUsage)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestComputeWorkloadStats(t *testing.T) {
 	usage := models.MetricAggregate{P50: 100, P95: 120, P99: 130, Max: 140}
 	stats := ComputeWorkloadStats(usage, 500, 10080)

@@ -58,10 +58,45 @@ func (e *Engine) Analyze(input AnalysisInput) AnalysisResult {
 
 	pattern := ClassifyWorkload(input.CPUUsageMillis, input.CPURequestMillis, input.DataWindowMinutes)
 
+	// Check for memory anomaly (possible leak).
+	if DetectMemoryAnomaly(input.MemUsageBytes) {
+		pattern = models.PatternAnomalous
+	}
+
 	slog.Debug("classified workload",
 		"owner", input.Owner.Kind+"/"+input.Owner.Name,
 		"container", input.ContainerName,
 		"pattern", pattern)
+
+	// Anomalous pattern: short-circuit both recommendations to investigation mode.
+	// GenerateCPURecommendation does its own classification internally, so we
+	// need to handle anomalous here to ensure CPU also gets the override.
+	if pattern == models.PatternAnomalous {
+		cpuRec := GenerateCPURecommendation(
+			input.Owner, input.ContainerName, input.CPUUsageMillis,
+			input.CPURequestMillis, input.CPULimitMillis, input.DataWindowMinutes,
+		)
+		// Override CPU recommendation to anomalous investigation mode.
+		if cpuRec != nil {
+			cpuRec.Pattern = models.PatternAnomalous
+			cpuRec.Risk = models.RiskHigh
+			cpuRec.RecommendedReq = input.CPURequestMillis
+			cpuRec.RecommendedLimit = input.CPULimitMillis
+			cpuRec.EstSavings = 0
+			cpuRec.Confidence = 0
+			cpuRec.Reasoning = "Anomalous resource pattern detected (possible memory leak). " +
+				"Investigate before making changes — do not reduce resources until root cause is identified."
+		}
+		memRec := GenerateMemoryRecommendation(
+			input.Owner, input.ContainerName, input.MemUsageBytes,
+			input.MemRequestBytes, input.MemLimitBytes, input.DataWindowMinutes, pattern,
+		)
+		return AnalysisResult{
+			Pattern:           pattern,
+			CPURecommendation: cpuRec,
+			MemRecommendation: memRec,
+		}
+	}
 
 	cpuRec := GenerateCPURecommendation(
 		input.Owner,
