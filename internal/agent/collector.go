@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/gregorytcarroll/k8s-sage/internal/models"
@@ -63,6 +64,8 @@ type podResourceInfo struct {
 	memLimitBytes    int64
 	restartCount     int32
 	qosClass         string
+	ownerKind        string
+	ownerName        string
 }
 
 // collect performs a single scrape of the kubelet Summary API and records metrics.
@@ -110,6 +113,8 @@ func (c *Collector) collect(ctx context.Context) {
 				m.MemoryLimitBytes = info.memLimitBytes
 				m.RestartCount = info.restartCount
 				m.QoSClass = info.qosClass
+				m.OwnerKind = info.ownerKind
+				m.OwnerName = info.ownerName
 			}
 
 			c.store.Record(m)
@@ -138,6 +143,9 @@ func (c *Collector) fetchPodResources(ctx context.Context) map[string]podResourc
 			restartCounts[cs.Name] = cs.RestartCount
 		}
 
+		// Resolve the controlling owner (e.g. ReplicaSet → Deployment).
+		ownerKind, ownerName := resolveOwner(pod.Metadata.OwnerReferences)
+
 		for _, container := range pod.Spec.Containers {
 			key := pod.Metadata.Namespace + "/" + pod.Metadata.Name + "/" + container.Name
 			result[key] = podResourceInfo{
@@ -147,6 +155,8 @@ func (c *Collector) fetchPodResources(ctx context.Context) map[string]podResourc
 				memLimitBytes:    parseMemoryToBytes(container.Resources.Limits.Memory),
 				restartCount:     restartCounts[container.Name],
 				qosClass:         pod.Status.QOSClass,
+				ownerKind:        ownerKind,
+				ownerName:        ownerName,
 			}
 		}
 	}
@@ -157,4 +167,43 @@ func (c *Collector) fetchPodResources(ctx context.Context) map[string]podResourc
 // CollectOnce performs a single collection. Useful for testing.
 func (c *Collector) CollectOnce(ctx context.Context) {
 	c.collect(ctx)
+}
+
+// resolveOwner extracts the controlling owner from a pod's OwnerReferences and
+// resolves ReplicaSet owners to their parent Deployment using the naming convention.
+func resolveOwner(refs []PodOwnerReference) (kind, name string) {
+	// Prefer the controlling owner reference.
+	for _, ref := range refs {
+		if ref.Controller != nil && *ref.Controller {
+			kind = ref.Kind
+			name = ref.Name
+			break
+		}
+	}
+	// Fallback to the first reference if no controller is marked.
+	if kind == "" && len(refs) > 0 {
+		kind = refs[0].Kind
+		name = refs[0].Name
+	}
+
+	// Resolve ReplicaSet → Deployment by stripping the pod-template-hash suffix.
+	// K8s naming convention: ReplicaSet name = "<deployment>-<pod-template-hash>".
+	if kind == "ReplicaSet" {
+		if depName := resolveDeploymentName(name); depName != "" {
+			kind = "Deployment"
+			name = depName
+		}
+	}
+
+	return kind, name
+}
+
+// resolveDeploymentName strips the trailing pod-template-hash from a ReplicaSet name
+// to derive the parent Deployment name. Returns "" if the name has no hyphen.
+func resolveDeploymentName(rsName string) string {
+	idx := strings.LastIndex(rsName, "-")
+	if idx <= 0 {
+		return ""
+	}
+	return rsName[:idx]
 }

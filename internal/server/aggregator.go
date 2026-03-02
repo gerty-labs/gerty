@@ -245,6 +245,10 @@ func aggregateByOwner(pods []models.PodWaste) []models.OwnerWaste {
 		}
 	}
 
+	slog.Debug("owner aggregation complete",
+		"uniqueOwners", len(accum),
+		"totalPods", len(pods))
+
 	owners := make([]models.OwnerWaste, 0, len(accum))
 	for _, oa := range accum {
 		containers := make([]models.ContainerWaste, 0, len(oa.containers))

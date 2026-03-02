@@ -23,6 +23,10 @@ type ContainerMetrics struct {
 	// Metadata
 	RestartCount int32  `json:"restartCount"`
 	QoSClass     string `json:"qosClass"`
+
+	// Owner (resolved from pod's ownerReferences).
+	OwnerKind string `json:"ownerKind,omitempty"`
+	OwnerName string `json:"ownerName,omitempty"`
 }
 
 // MetricAggregate holds P50/P95/P99/Max for a metric over a time window.

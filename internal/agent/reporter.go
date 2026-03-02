@@ -89,6 +89,15 @@ func (r *Reporter) buildReport() models.NodeReport {
 				podWaste.QoSClass = meta.QoSClass
 			}
 
+			// Set owner reference from container metadata (same for all containers in a pod).
+			if podWaste.OwnerRef.Kind == "" && meta.OwnerKind != "" {
+				podWaste.OwnerRef = models.OwnerReference{
+					Kind:      meta.OwnerKind,
+					Name:      meta.OwnerName,
+					Namespace: pk.namespace,
+				}
+			}
+
 			cw := computeContainerWaste(summary, meta, r.store.DataWindow(key))
 			podWaste.Containers = append(podWaste.Containers, cw)
 			podWaste.TotalCPUWasteMillis += cw.CPUWasteMillis

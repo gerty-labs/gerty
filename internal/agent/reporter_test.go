@@ -162,6 +162,72 @@ func TestReporter_HandleReport_NoWasteWhenNoRequests(t *testing.T) {
 	assert.Equal(t, float64(0), container.MemWasteBytes)
 }
 
+func TestReporter_HandleReport_PopulatesOwnerRef(t *testing.T) {
+	store := NewStore()
+
+	// Record a container with owner info (as if collector resolved it).
+	store.Record(models.ContainerMetrics{
+		PodName:               "web-app-7f8b9c-abcde",
+		PodNamespace:          "default",
+		ContainerName:         "nginx",
+		Timestamp:             time.Now(),
+		CPUUsageNanoCores:     150_000_000,
+		CPURequestMillis:      1000,
+		MemoryWorkingSetBytes: 100_000_000,
+		MemoryRequestBytes:    500_000_000,
+		OwnerKind:             "Deployment",
+		OwnerName:             "web-app",
+	})
+
+	reporter := NewReporter("test-node", store)
+	req := httptest.NewRequest(http.MethodGet, "/report", nil)
+	w := httptest.NewRecorder()
+
+	reporter.HandleReport(w, req)
+
+	var report models.NodeReport
+	err := json.NewDecoder(w.Body).Decode(&report)
+	require.NoError(t, err)
+
+	require.Len(t, report.Pods, 1)
+	pod := report.Pods[0]
+	assert.Equal(t, "Deployment", pod.OwnerRef.Kind)
+	assert.Equal(t, "web-app", pod.OwnerRef.Name)
+	assert.Equal(t, "default", pod.OwnerRef.Namespace)
+}
+
+func TestReporter_HandleReport_NoOwnerRef(t *testing.T) {
+	store := NewStore()
+
+	// Record a container without owner info (standalone pod).
+	store.Record(models.ContainerMetrics{
+		PodName:               "standalone-pod",
+		PodNamespace:          "default",
+		ContainerName:         "app",
+		Timestamp:             time.Now(),
+		CPUUsageNanoCores:     100_000_000,
+		CPURequestMillis:      500,
+		MemoryWorkingSetBytes: 50_000_000,
+		MemoryRequestBytes:    200_000_000,
+	})
+
+	reporter := NewReporter("test-node", store)
+	req := httptest.NewRequest(http.MethodGet, "/report", nil)
+	w := httptest.NewRecorder()
+
+	reporter.HandleReport(w, req)
+
+	var report models.NodeReport
+	err := json.NewDecoder(w.Body).Decode(&report)
+	require.NoError(t, err)
+
+	require.Len(t, report.Pods, 1)
+	pod := report.Pods[0]
+	// OwnerRef should be empty for standalone pods.
+	assert.Equal(t, "", pod.OwnerRef.Kind)
+	assert.Equal(t, "", pod.OwnerRef.Name)
+}
+
 func TestComputeContainerWaste(t *testing.T) {
 	tests := []struct {
 		name            string

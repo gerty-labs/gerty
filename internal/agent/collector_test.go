@@ -197,3 +197,151 @@ func TestCollector_MultipleScrapes_AccumulateSamples(t *testing.T) {
 	// All 3 containers should still be tracked.
 	assert.Len(t, store.ContainerKeys(), 3)
 }
+
+func boolPtr(v bool) *bool { return &v }
+
+func TestResolveOwner(t *testing.T) {
+	tests := []struct {
+		name     string
+		refs     []PodOwnerReference
+		wantKind string
+		wantName string
+	}{
+		{
+			name:     "no owner references",
+			refs:     nil,
+			wantKind: "",
+			wantName: "",
+		},
+		{
+			name: "ReplicaSet controller — resolved to Deployment",
+			refs: []PodOwnerReference{
+				{Kind: "ReplicaSet", Name: "web-app-7f8b9c5d6e", Controller: boolPtr(true)},
+			},
+			wantKind: "Deployment",
+			wantName: "web-app",
+		},
+		{
+			name: "StatefulSet controller — kept as-is",
+			refs: []PodOwnerReference{
+				{Kind: "StatefulSet", Name: "redis", Controller: boolPtr(true)},
+			},
+			wantKind: "StatefulSet",
+			wantName: "redis",
+		},
+		{
+			name: "DaemonSet controller — kept as-is",
+			refs: []PodOwnerReference{
+				{Kind: "DaemonSet", Name: "fluentd", Controller: boolPtr(true)},
+			},
+			wantKind: "DaemonSet",
+			wantName: "fluentd",
+		},
+		{
+			name: "no controller flag — falls back to first ref",
+			refs: []PodOwnerReference{
+				{Kind: "ReplicaSet", Name: "api-abc123"},
+			},
+			wantKind: "Deployment",
+			wantName: "api",
+		},
+		{
+			name: "multiple refs — picks controller",
+			refs: []PodOwnerReference{
+				{Kind: "Node", Name: "node-1"},
+				{Kind: "ReplicaSet", Name: "backend-6d5f4c3b2a", Controller: boolPtr(true)},
+			},
+			wantKind: "Deployment",
+			wantName: "backend",
+		},
+		{
+			name: "ReplicaSet with no hyphen — kept as ReplicaSet",
+			refs: []PodOwnerReference{
+				{Kind: "ReplicaSet", Name: "standaloners", Controller: boolPtr(true)},
+			},
+			wantKind: "ReplicaSet",
+			wantName: "standaloners",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kind, name := resolveOwner(tt.refs)
+			assert.Equal(t, tt.wantKind, kind)
+			assert.Equal(t, tt.wantName, name)
+		})
+	}
+}
+
+func TestResolveDeploymentName(t *testing.T) {
+	tests := []struct {
+		rsName string
+		want   string
+	}{
+		{"web-app-7f8b9c5d6e", "web-app"},
+		{"api-abc123", "api"},
+		{"simple-rs-hash", "simple-rs"},
+		{"nohyphen", ""},
+		{"-leadinghyphen", ""},
+		{"a-b", "a"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.rsName, func(t *testing.T) {
+			assert.Equal(t, tt.want, resolveDeploymentName(tt.rsName))
+		})
+	}
+}
+
+func TestCollector_CollectOnce_PropagatesOwnerRef(t *testing.T) {
+	store := NewStore()
+
+	summary := &SummaryResponse{
+		Node: NodeStats{NodeName: "test-node"},
+		Pods: []PodStats{
+			{
+				PodRef: PodReference{Name: "web-app-7f8b9c-abcde", Namespace: "default"},
+				Containers: []ContainerStats{
+					{
+						Name: "nginx",
+						CPU:  &CPUStats{UsageNanoCores: uint64Ptr(100_000_000)},
+						Memory: &MemStats{WorkingSetBytes: uint64Ptr(50_000_000)},
+					},
+				},
+			},
+		},
+	}
+
+	podList := &PodListResponse{
+		Items: []PodItem{
+			{
+				Metadata: PodItemMeta{
+					Name:      "web-app-7f8b9c-abcde",
+					Namespace: "default",
+					OwnerReferences: []PodOwnerReference{
+						{Kind: "ReplicaSet", Name: "web-app-7f8b9c", Controller: boolPtr(true)},
+					},
+				},
+				Spec: PodSpec{
+					Containers: []PodSpecContainer{
+						{Name: "nginx", Resources: ContainerResourceSpec{
+							Requests: ResourceValues{CPU: "500m", Memory: "256Mi"},
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	mock := &mockKubeletClient{response: summary, podResponse: podList}
+	collector := NewCollectorWithClient(mock, store, 30*time.Second)
+
+	collector.CollectOnce(context.Background())
+
+	meta, ok := store.GetContainerMeta("default/web-app-7f8b9c-abcde/nginx")
+	require.True(t, ok)
+
+	// ReplicaSet "web-app-7f8b9c" should be resolved to Deployment "web-app".
+	assert.Equal(t, "Deployment", meta.OwnerKind)
+	assert.Equal(t, "web-app", meta.OwnerName)
+}

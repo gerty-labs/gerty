@@ -66,8 +66,16 @@ type PodItem struct {
 }
 
 type PodItemMeta struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
+	Name            string              `json:"name"`
+	Namespace       string              `json:"namespace"`
+	OwnerReferences []PodOwnerReference `json:"ownerReferences,omitempty"`
+}
+
+// PodOwnerReference is a minimal representation of a Kubernetes OwnerReference.
+type PodOwnerReference struct {
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Controller *bool  `json:"controller,omitempty"`
 }
 
 type PodSpec struct {

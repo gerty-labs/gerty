@@ -59,6 +59,8 @@ type containerTimeSeries struct {
 	memLimitBytes     int64
 	restartCount      int32
 	qosClass          string
+	ownerKind         string
+	ownerName         string
 
 	// Raw samples waiting to be aggregated.
 	rawSamples []rawSample
@@ -109,6 +111,10 @@ func (s *Store) Record(m models.ContainerMetrics) {
 	ts.memLimitBytes = m.MemoryLimitBytes
 	ts.restartCount = m.RestartCount
 	ts.qosClass = m.QoSClass
+	if m.OwnerKind != "" {
+		ts.ownerKind = m.OwnerKind
+		ts.ownerName = m.OwnerName
+	}
 
 	ts.rawSamples = append(ts.rawSamples, rawSample{
 		timestamp:     m.Timestamp,
@@ -416,6 +422,8 @@ func (s *Store) GetContainerMeta(key string) (ContainerMeta, bool) {
 		MemLimitBytes:    ts.memLimitBytes,
 		RestartCount:     ts.restartCount,
 		QoSClass:         ts.qosClass,
+		OwnerKind:        ts.ownerKind,
+		OwnerName:        ts.ownerName,
 	}, true
 }
 
@@ -430,6 +438,8 @@ type ContainerMeta struct {
 	MemLimitBytes    int64
 	RestartCount     int32
 	QoSClass         string
+	OwnerKind        string
+	OwnerName        string
 }
 
 // ContainerKeys returns all tracked container keys.
