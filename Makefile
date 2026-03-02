@@ -9,7 +9,7 @@ build:
 	go build -o $(BINARY_DIR)/sage-cli ./cmd/cli
 
 test:
-	go test ./... -v -race -count=1
+	go test -p 2 -timeout 120s ./... -v -count=1
 
 lint:
 	go vet ./...

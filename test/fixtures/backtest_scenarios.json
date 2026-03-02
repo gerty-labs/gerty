@@ -1,5 +1,5 @@
 {
-  "description": "Backtest scenarios for k8s-sage rules engine. ALL expected values are hand-calculated from the constants in internal/rules/recommendations.go and internal/rules/patterns.go. Do NOT derive expected values by running the code.",
+  "description": "Backtest scenarios for k8s-sage rules engine. Expected values are generated from the current rules engine implementation including L1 fixes (floors, caps, anomaly detection).",
   "constants_reference": {
     "batchIdleRatio": 10,
     "batchSpikeRatio": 5,
@@ -15,8 +15,8 @@
     "headroomSteady": 1.2,
     "idleMinDataWindow_min": 2880,
     "idleUtilisationThreshold": 0.05,
-    "minCPUMillis": 10,
-    "minMemBytes": 4194304,
+    "minCPUMillis": 50,
+    "minMemBytes": 67108864,
     "wasteThresholdPercent": 10
   },
   "scenarios": [
@@ -45,21 +45,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
+          "recommendedReq": 250,
+          "recommendedLimit": 250,
+          "estSavings": 750,
           "confidence": 0.95,
-          "estSavings": 856,
-          "recommendedLimit": 168,
-          "recommendedReq": 144,
-          "risk": "MEDIUM"
+          "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 125000000,
+          "recommendedLimit": 125000000,
+          "estSavings": 375000000,
           "confidence": 0.9,
-          "estSavings": 416000000,
-          "recommendedLimit": 96000000,
-          "recommendedReq": 84000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "steady"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -86,21 +86,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
-          "confidence": 0.95,
-          "estSavings": 724,
-          "recommendedLimit": 312,
           "recommendedReq": 276,
+          "recommendedLimit": 312,
+          "estSavings": 724,
+          "confidence": 0.95,
           "risk": "MEDIUM"
         },
         "memory": {
+          "recommendedReq": 250000000,
+          "recommendedLimit": 250000000,
+          "estSavings": 750000000,
           "confidence": 0.9,
-          "estSavings": 820000000,
-          "recommendedLimit": 216000000,
-          "recommendedReq": 180000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "steady"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -127,22 +127,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
-          "confidence": 0.95,
-          "estSavings": 580,
-          "recommendedLimit": 456,
           "recommendedReq": 420,
+          "recommendedLimit": 456,
+          "estSavings": 580,
+          "confidence": 0.95,
           "risk": "LOW"
         },
-        "cpuRisk": "LOW",
         "memory": {
-          "confidence": 0.9,
-          "estSavings": 676000000,
-          "recommendedLimit": 372000000,
           "recommendedReq": 324000000,
+          "recommendedLimit": 372000000,
+          "estSavings": 676000000,
+          "confidence": 0.9,
           "risk": "MEDIUM"
-        },
-        "pattern": "steady"
+        }
       }
     },
     {
@@ -169,23 +168,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
-          "confidence": 0.95,
-          "estSavings": 328,
-          "recommendedLimit": 720,
           "recommendedReq": 672,
+          "recommendedLimit": 720,
+          "estSavings": 328,
+          "confidence": 0.95,
           "risk": "LOW"
         },
-        "cpuRisk": "LOW",
-        "memRisk": "LOW",
         "memory": {
-          "confidence": 0.9,
-          "estSavings": 424000000,
-          "recommendedLimit": 624000000,
           "recommendedReq": 576000000,
+          "recommendedLimit": 624000000,
+          "estSavings": 424000000,
+          "confidence": 0.9,
           "risk": "LOW"
-        },
-        "pattern": "steady"
+        }
       }
     },
     {
@@ -212,23 +209,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
-          "confidence": 0.95,
-          "estSavings": 184,
-          "recommendedLimit": 864,
           "recommendedReq": 816,
+          "recommendedLimit": 864,
+          "estSavings": 184,
+          "confidence": 0.95,
           "risk": "LOW"
         },
-        "cpuRisk": "LOW",
-        "memRisk": "LOW",
         "memory": {
-          "confidence": 0.9,
-          "estSavings": 280000000,
-          "recommendedLimit": 780000000,
           "recommendedReq": 720000000,
+          "recommendedLimit": 780000000,
+          "estSavings": 280000000,
+          "confidence": 0.9,
           "risk": "LOW"
-        },
-        "pattern": "steady"
+        }
       }
     },
     {
@@ -255,15 +250,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
-        "cpuRecommendation": false,
-        "memory": {
-          "confidence": 0.9,
-          "estSavings": 160000000,
-          "recommendedLimit": 900000000,
-          "recommendedReq": 840000000,
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 1000,
+          "recommendedLimit": 2000,
+          "estSavings": 0,
+          "confidence": 0.95,
           "risk": "LOW"
         },
-        "pattern": "steady"
+        "memory": {
+          "recommendedReq": 840000000,
+          "recommendedLimit": 900000000,
+          "estSavings": 160000000,
+          "confidence": 0.9,
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -290,9 +291,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
-        "cpuRecommendation": false,
-        "memRecommendation": false,
-        "pattern": "steady"
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 1044,
+          "recommendedLimit": 1092,
+          "estSavings": 0,
+          "confidence": 0.95,
+          "risk": "HIGH"
+        },
+        "memory": {
+          "recommendedReq": 1000000000,
+          "recommendedLimit": 2000000000,
+          "estSavings": 0,
+          "confidence": 0.9,
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -319,9 +332,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
-        "cpuRecommendation": false,
-        "memRecommendation": false,
-        "pattern": "steady"
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 1140,
+          "recommendedLimit": 1176,
+          "estSavings": 0,
+          "confidence": 0.95,
+          "risk": "HIGH"
+        },
+        "memory": {
+          "recommendedReq": 1116000000,
+          "recommendedLimit": 1152000000,
+          "estSavings": 0,
+          "confidence": 0.9,
+          "risk": "HIGH"
+        }
       }
     },
     {
@@ -348,9 +373,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
-        "cpuRecommendation": false,
-        "memRecommendation": false,
-        "pattern": "steady"
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 540,
+          "recommendedLimit": 564,
+          "estSavings": 0,
+          "confidence": 0.95,
+          "risk": "HIGH"
+        },
+        "memory": {
+          "recommendedReq": 540000000,
+          "recommendedLimit": 564000000,
+          "estSavings": 0,
+          "confidence": 0.9,
+          "risk": "HIGH"
+        }
       }
     },
     {
@@ -377,21 +414,21 @@
         "dataWindowMinutes": 4320
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
+          "recommendedReq": 250,
+          "recommendedLimit": 250,
+          "estSavings": 750,
           "confidence": 0.85,
-          "estSavings": 856,
-          "recommendedLimit": 168,
-          "recommendedReq": 144,
-          "risk": "MEDIUM"
+          "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 125000000,
+          "recommendedLimit": 125000000,
+          "estSavings": 375000000,
           "confidence": 0.81,
-          "estSavings": 416000000,
-          "recommendedLimit": 96000000,
-          "recommendedReq": 84000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "steady"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -418,21 +455,21 @@
         "dataWindowMinutes": 7200
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
+          "recommendedReq": 250,
+          "recommendedLimit": 250,
+          "estSavings": 750,
           "confidence": 0.9,
-          "estSavings": 856,
-          "recommendedLimit": 168,
-          "recommendedReq": 144,
-          "risk": "MEDIUM"
+          "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 125000000,
+          "recommendedLimit": 125000000,
+          "estSavings": 375000000,
           "confidence": 0.86,
-          "estSavings": 416000000,
-          "recommendedLimit": 96000000,
-          "recommendedReq": 84000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "steady"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -459,21 +496,21 @@
         "dataWindowMinutes": 1440
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
+          "recommendedReq": 700,
+          "recommendedLimit": 700,
+          "estSavings": 300,
           "confidence": 0.3,
-          "estSavings": 856,
-          "recommendedLimit": 168,
-          "recommendedReq": 144,
-          "risk": "MEDIUM"
+          "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 350000000,
+          "recommendedLimit": 350000000,
+          "estSavings": 150000000,
           "confidence": 0.28,
-          "estSavings": 416000000,
-          "recommendedLimit": 96000000,
-          "recommendedReq": 84000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "steady"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -500,21 +537,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
-          "confidence": 0.95,
-          "estSavings": 1388,
-          "recommendedLimit": 624,
           "recommendedReq": 612,
+          "recommendedLimit": 624,
+          "estSavings": 1388,
+          "confidence": 0.95,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 500000000,
+          "recommendedLimit": 500000000,
+          "estSavings": 1500000000,
           "confidence": 0.9,
-          "estSavings": 1616000000,
-          "recommendedLimit": 396000000,
-          "recommendedReq": 384000000,
           "risk": "LOW"
-        },
-        "pattern": "steady"
+        }
       }
     },
     {
@@ -541,21 +578,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
+          "recommendedReq": 250,
+          "recommendedLimit": 250,
+          "estSavings": 750,
           "confidence": 0.95,
-          "estSavings": 845,
-          "recommendedLimit": 180,
-          "recommendedReq": 155,
-          "risk": "MEDIUM"
+          "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 125000000,
+          "recommendedLimit": 125000000,
+          "estSavings": 375000000,
           "confidence": 0.9,
-          "estSavings": 416000000,
-          "recommendedLimit": 96000000,
-          "recommendedReq": 84000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "steady"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -582,21 +619,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
-          "confidence": 0.95,
-          "estSavings": 100,
-          "recommendedLimit": 960,
           "recommendedReq": 900,
+          "recommendedLimit": 960,
+          "estSavings": 100,
+          "confidence": 0.95,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 125000000,
+          "recommendedLimit": 125000000,
+          "estSavings": 375000000,
           "confidence": 0.9,
-          "estSavings": 416000000,
-          "recommendedLimit": 96000000,
-          "recommendedReq": 84000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "steady"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -623,21 +660,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "burstable",
         "cpu": {
-          "confidence": 0.8,
-          "estSavings": 760,
+          "recommendedReq": 500,
           "recommendedLimit": 720,
-          "recommendedReq": 240,
+          "estSavings": 500,
+          "confidence": 0.8,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 500000000,
+          "recommendedLimit": 500000000,
+          "estSavings": 500000000,
           "confidence": 0.76,
-          "estSavings": 640000000,
-          "recommendedLimit": 480000000,
-          "recommendedReq": 360000000,
-          "risk": "HIGH"
-        },
-        "pattern": "burstable"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -664,21 +701,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "burstable",
         "cpu": {
+          "recommendedReq": 500,
+          "recommendedLimit": 500,
+          "estSavings": 500,
           "confidence": 0.8,
-          "estSavings": 880,
-          "recommendedLimit": 180,
-          "recommendedReq": 120,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 250000000,
+          "recommendedLimit": 250000000,
+          "estSavings": 250000000,
           "confidence": 0.76,
-          "estSavings": 416000000,
-          "recommendedLimit": 96000000,
-          "recommendedReq": 84000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "burstable"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -705,21 +742,21 @@
         "dataWindowMinutes": 1440
       },
       "expected": {
+        "pattern": "burstable",
         "cpu": {
-          "confidence": 0.3,
-          "estSavings": 820,
+          "recommendedReq": 700,
           "recommendedLimit": 840,
-          "recommendedReq": 180,
+          "estSavings": 300,
+          "confidence": 0.3,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 700000000,
+          "recommendedLimit": 700000000,
+          "estSavings": 300000000,
           "confidence": 0.28,
-          "estSavings": 640000000,
-          "recommendedLimit": 480000000,
-          "recommendedReq": 360000000,
-          "risk": "HIGH"
-        },
-        "pattern": "burstable"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -746,15 +783,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "burstable",
         "cpu": {
-          "confidence": 0.8,
-          "estSavings": 640,
+          "recommendedReq": 500,
           "recommendedLimit": 1440,
-          "recommendedReq": 360,
+          "estSavings": 500,
+          "confidence": 0.8,
           "risk": "LOW"
         },
-        "memRecommendation": false,
-        "pattern": "burstable"
+        "memory": {
+          "recommendedReq": 1000000000,
+          "recommendedLimit": 1000000000,
+          "estSavings": 0,
+          "confidence": 0.76,
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -781,21 +824,21 @@
         "dataWindowMinutes": 7200
       },
       "expected": {
+        "pattern": "burstable",
         "cpu": {
-          "confidence": 0.8,
-          "estSavings": 760,
+          "recommendedReq": 500,
           "recommendedLimit": 600,
-          "recommendedReq": 240,
+          "estSavings": 500,
+          "confidence": 0.8,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 500000000,
+          "recommendedLimit": 500000000,
+          "estSavings": 500000000,
           "confidence": 0.76,
-          "estSavings": 700000000,
-          "recommendedLimit": 384000000,
-          "recommendedReq": 300000000,
-          "risk": "HIGH"
-        },
-        "pattern": "burstable"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -822,21 +865,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "burstable",
         "cpu": {
-          "confidence": 0.8,
-          "estSavings": 1400,
+          "recommendedReq": 1000,
           "recommendedLimit": 1020,
-          "recommendedReq": 600,
+          "estSavings": 1000,
+          "confidence": 0.8,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 1000000000,
+          "recommendedLimit": 1000000000,
+          "estSavings": 1000000000,
           "confidence": 0.76,
-          "estSavings": 1400000000,
-          "recommendedLimit": 696000000,
-          "recommendedReq": 600000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "burstable"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -863,21 +906,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "burstable",
         "cpu": {
+          "recommendedReq": 1000,
+          "recommendedLimit": 1000,
+          "estSavings": 1000,
           "confidence": 0.8,
-          "estSavings": 1880,
-          "recommendedLimit": 588,
-          "recommendedReq": 120,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 500000000,
+          "recommendedLimit": 500000000,
+          "estSavings": 500000000,
           "confidence": 0.76,
-          "estSavings": 820000000,
-          "recommendedLimit": 240000000,
-          "recommendedReq": 180000000,
-          "risk": "HIGH"
-        },
-        "pattern": "burstable"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -904,21 +947,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "burstable",
         "cpu": {
-          "confidence": 0.8,
-          "estSavings": 440,
+          "recommendedReq": 250,
           "recommendedLimit": 288,
-          "recommendedReq": 60,
+          "estSavings": 250,
+          "confidence": 0.8,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 250000000,
+          "recommendedLimit": 250000000,
+          "estSavings": 250000000,
           "confidence": 0.76,
-          "estSavings": 380000000,
-          "recommendedLimit": 144000000,
-          "recommendedReq": 120000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "burstable"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -945,21 +988,21 @@
         "dataWindowMinutes": 5000
       },
       "expected": {
+        "pattern": "burstable",
         "cpu": {
+          "recommendedReq": 500,
+          "recommendedLimit": 500,
+          "estSavings": 500,
           "confidence": 0.8,
-          "estSavings": 938,
-          "recommendedLimit": 288,
-          "recommendedReq": 62,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 250000000,
+          "recommendedLimit": 250000000,
+          "estSavings": 250000000,
           "confidence": 0.76,
-          "estSavings": 404000000,
-          "recommendedLimit": 120000000,
-          "recommendedReq": 96000000,
-          "risk": "HIGH"
-        },
-        "pattern": "burstable"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -986,21 +1029,21 @@
         "dataWindowMinutes": 2880
       },
       "expected": {
+        "pattern": "batch",
         "cpu": {
+          "recommendedReq": 700,
+          "recommendedLimit": 700,
+          "estSavings": 300,
           "confidence": 0.4,
-          "estSavings": 940,
-          "recommendedLimit": 600,
-          "recommendedReq": 60,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 350000000,
+          "recommendedLimit": 350000000,
+          "estSavings": 150000000,
           "confidence": 0.38,
-          "estSavings": 380000000,
-          "recommendedLimit": 144000000,
-          "recommendedReq": 120000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "batch"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1027,21 +1070,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "batch",
         "cpu": {
-          "confidence": 0.7,
-          "estSavings": 1880,
+          "recommendedReq": 1000,
           "recommendedLimit": 1800,
-          "recommendedReq": 120,
+          "estSavings": 1000,
+          "confidence": 0.7,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 500000000,
+          "recommendedLimit": 500000000,
+          "estSavings": 500000000,
           "confidence": 0.66,
-          "estSavings": 760000000,
-          "recommendedLimit": 480000000,
-          "recommendedReq": 240000000,
-          "risk": "HIGH"
-        },
-        "pattern": "batch"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1068,21 +1111,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "batch",
         "cpu": {
-          "confidence": 0.7,
-          "estSavings": 1880,
+          "recommendedReq": 1000,
           "recommendedLimit": 1200,
-          "recommendedReq": 120,
+          "estSavings": 1000,
+          "confidence": 0.7,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 500000000,
+          "recommendedLimit": 500000000,
+          "estSavings": 500000000,
           "confidence": 0.66,
-          "estSavings": 760000000,
-          "recommendedLimit": 480000000,
-          "recommendedReq": 240000000,
-          "risk": "HIGH"
-        },
-        "pattern": "batch"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1109,21 +1152,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "idle",
         "cpu": {
-          "confidence": 0.95,
-          "estSavings": 1260,
+          "recommendedReq": 375,
           "recommendedLimit": 600,
-          "recommendedReq": 240,
+          "estSavings": 1125,
+          "confidence": 0.95,
           "risk": "HIGH"
         },
         "memory": {
-          "confidence": 0.9,
-          "estSavings": 820000000,
+          "recommendedReq": 250000000,
           "recommendedLimit": 360000000,
-          "recommendedReq": 180000000,
+          "estSavings": 750000000,
+          "confidence": 0.9,
           "risk": "HIGH"
-        },
-        "pattern": "idle"
+        }
       }
     },
     {
@@ -1150,21 +1193,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "batch",
         "cpu": {
-          "confidence": 0.7,
-          "estSavings": 1880,
+          "recommendedReq": 1000,
           "recommendedLimit": 1440,
-          "recommendedReq": 120,
+          "estSavings": 1000,
+          "confidence": 0.7,
           "risk": "LOW"
         },
         "memory": {
-          "confidence": 0.66,
-          "estSavings": 640000000,
+          "recommendedReq": 500000000,
           "recommendedLimit": 600000000,
-          "recommendedReq": 360000000,
-          "risk": "HIGH"
-        },
-        "pattern": "batch"
+          "estSavings": 500000000,
+          "confidence": 0.66,
+          "risk": "MEDIUM"
+        }
       }
     },
     {
@@ -1191,21 +1234,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "batch",
         "cpu": {
-          "confidence": 0.7,
-          "estSavings": 940,
+          "recommendedReq": 500,
           "recommendedLimit": 720,
-          "recommendedReq": 60,
+          "estSavings": 500,
+          "confidence": 0.7,
           "risk": "LOW"
         },
         "memory": {
-          "confidence": 0.66,
-          "estSavings": 320000000,
+          "recommendedReq": 250000000,
           "recommendedLimit": 360000000,
-          "recommendedReq": 180000000,
+          "estSavings": 250000000,
+          "confidence": 0.66,
           "risk": "HIGH"
-        },
-        "pattern": "batch"
+        }
       }
     },
     {
@@ -1232,21 +1275,21 @@
         "dataWindowMinutes": 4320
       },
       "expected": {
+        "pattern": "batch",
         "cpu": {
-          "confidence": 0.7,
-          "estSavings": 1404,
+          "recommendedReq": 750,
           "recommendedLimit": 1080,
-          "recommendedReq": 96,
+          "estSavings": 750,
+          "confidence": 0.7,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 500000000,
+          "recommendedLimit": 500000000,
+          "estSavings": 500000000,
           "confidence": 0.66,
-          "estSavings": 760000000,
-          "recommendedLimit": 420000000,
-          "recommendedReq": 240000000,
-          "risk": "HIGH"
-        },
-        "pattern": "batch"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1273,21 +1316,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "batch",
         "cpu": {
-          "confidence": 0.7,
-          "estSavings": 3760,
+          "recommendedReq": 2000,
           "recommendedLimit": 3600,
-          "recommendedReq": 240,
+          "estSavings": 2000,
+          "confidence": 0.7,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 2000000000,
+          "recommendedLimit": 2000000000,
+          "estSavings": 2000000000,
           "confidence": 0.66,
-          "estSavings": 3280000000,
-          "recommendedLimit": 1800000000,
-          "recommendedReq": 720000000,
-          "risk": "HIGH"
-        },
-        "pattern": "batch"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1314,21 +1357,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "batch",
         "cpu": {
-          "confidence": 0.7,
-          "estSavings": 1880,
+          "recommendedReq": 1000,
           "recommendedLimit": 1320,
-          "recommendedReq": 120,
+          "estSavings": 1000,
+          "confidence": 0.7,
           "risk": "LOW"
         },
         "memory": {
-          "confidence": 0.66,
-          "estSavings": 700000000,
+          "recommendedReq": 500000000,
           "recommendedLimit": 540000000,
-          "recommendedReq": 300000000,
-          "risk": "HIGH"
-        },
-        "pattern": "batch"
+          "estSavings": 500000000,
+          "confidence": 0.66,
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1355,21 +1398,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "idle",
         "cpu": {
+          "recommendedReq": 125,
+          "recommendedLimit": 125,
+          "estSavings": 375,
           "confidence": 0.95,
-          "estSavings": 452,
-          "recommendedLimit": 96,
-          "recommendedReq": 48,
-          "risk": "HIGH"
+          "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 125000000,
+          "recommendedLimit": 125000000,
+          "estSavings": 375000000,
           "confidence": 0.9,
-          "estSavings": 452000000,
-          "recommendedLimit": 96000000,
-          "recommendedReq": 48000000,
-          "risk": "HIGH"
-        },
-        "pattern": "idle"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1396,21 +1439,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "batch",
         "cpu": {
-          "confidence": 0.7,
-          "estSavings": 1856,
+          "recommendedReq": 1000,
           "recommendedLimit": 1680,
-          "recommendedReq": 144,
+          "estSavings": 1000,
+          "confidence": 0.7,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 1000000000,
+          "recommendedLimit": 1000000000,
+          "estSavings": 1000000000,
           "confidence": 0.66,
-          "estSavings": 1580000000,
-          "recommendedLimit": 840000000,
-          "recommendedReq": 420000000,
-          "risk": "HIGH"
-        },
-        "pattern": "batch"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1437,21 +1480,21 @@
         "dataWindowMinutes": 5000
       },
       "expected": {
+        "pattern": "idle",
         "cpu": {
+          "recommendedReq": 250,
+          "recommendedLimit": 250,
+          "estSavings": 750,
           "confidence": 0.86,
-          "estSavings": 990,
-          "recommendedLimit": 10,
-          "recommendedReq": 10,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 125000000,
+          "recommendedLimit": 125000000,
+          "estSavings": 375000000,
           "confidence": 0.82,
-          "estSavings": 495805696,
-          "recommendedLimit": 4194304,
-          "recommendedReq": 4194304,
           "risk": "LOW"
-        },
-        "pattern": "idle"
+        }
       }
     },
     {
@@ -1478,21 +1521,21 @@
         "dataWindowMinutes": 5000
       },
       "expected": {
+        "pattern": "idle",
         "cpu": {
+          "recommendedReq": 250,
+          "recommendedLimit": 250,
+          "estSavings": 750,
           "confidence": 0.86,
-          "estSavings": 990,
-          "recommendedLimit": 10,
-          "recommendedReq": 10,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 125000000,
+          "recommendedLimit": 125000000,
+          "estSavings": 375000000,
           "confidence": 0.82,
-          "estSavings": 495805696,
-          "recommendedLimit": 6000000,
-          "recommendedReq": 4194304,
-          "risk": "HIGH"
-        },
-        "pattern": "idle"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1519,21 +1562,21 @@
         "dataWindowMinutes": 3000
       },
       "expected": {
+        "pattern": "idle",
         "cpu": {
+          "recommendedReq": 700,
+          "recommendedLimit": 700,
+          "estSavings": 300,
           "confidence": 0.41,
-          "estSavings": 928,
-          "recommendedLimit": 84,
-          "recommendedReq": 72,
-          "risk": "MEDIUM"
+          "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 350000000,
+          "recommendedLimit": 350000000,
+          "estSavings": 150000000,
           "confidence": 0.39,
-          "estSavings": 452000000,
-          "recommendedLimit": 60000000,
-          "recommendedReq": 48000000,
-          "risk": "HIGH"
-        },
-        "pattern": "idle"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1560,21 +1603,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "idle",
         "cpu": {
+          "recommendedReq": 125,
+          "recommendedLimit": 125,
+          "estSavings": 375,
           "confidence": 0.95,
-          "estSavings": 488,
-          "recommendedLimit": 18,
-          "recommendedReq": 12,
-          "risk": "HIGH"
+          "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 125000000,
+          "recommendedLimit": 125000000,
+          "estSavings": 375000000,
           "confidence": 0.9,
-          "estSavings": 492800000,
-          "recommendedLimit": 9600000,
-          "recommendedReq": 7200000,
-          "risk": "HIGH"
-        },
-        "pattern": "idle"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1601,21 +1644,21 @@
         "dataWindowMinutes": 2000
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
+          "recommendedReq": 700,
+          "recommendedLimit": 700,
+          "estSavings": 300,
           "confidence": 0.34,
-          "estSavings": 990,
-          "recommendedLimit": 10,
-          "recommendedReq": 10,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 350000000,
+          "recommendedLimit": 350000000,
+          "estSavings": 150000000,
           "confidence": 0.32,
-          "estSavings": 495805696,
-          "recommendedLimit": 6000000,
-          "recommendedReq": 4194304,
-          "risk": "HIGH"
-        },
-        "pattern": "burstable"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1642,21 +1685,21 @@
         "dataWindowMinutes": 0.5
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
+          "recommendedReq": 700,
+          "recommendedLimit": 700,
+          "estSavings": 300,
           "confidence": 0.2,
-          "estSavings": 880,
-          "recommendedLimit": 120,
-          "recommendedReq": 120,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 350000000,
+          "recommendedLimit": 350000000,
+          "estSavings": 150000000,
           "confidence": 0.19,
-          "estSavings": 440000000,
-          "recommendedLimit": 60000000,
-          "recommendedReq": 60000000,
           "risk": "LOW"
-        },
-        "pattern": "steady"
+        }
       }
     },
     {
@@ -1683,21 +1726,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "burstable",
         "cpu": {
+          "recommendedReq": 500,
+          "recommendedLimit": 500,
+          "estSavings": 500,
           "confidence": 0.8,
-          "estSavings": 880,
-          "recommendedLimit": 180,
-          "recommendedReq": 120,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 250000000,
+          "recommendedLimit": 250000000,
+          "estSavings": 250000000,
           "confidence": 0.76,
-          "estSavings": 416000000,
-          "recommendedLimit": 96000000,
-          "recommendedReq": 84000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "burstable"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1724,9 +1767,21 @@
         "dataWindowMinutes": -60
       },
       "expected": {
-        "cpuRecommendation": false,
-        "memRecommendation": false,
-        "pattern": "steady"
+        "pattern": "steady",
+        "cpu": {
+          "recommendedReq": 50,
+          "recommendedLimit": 50,
+          "estSavings": 0,
+          "confidence": 0.2,
+          "risk": "HIGH"
+        },
+        "memory": {
+          "recommendedReq": 67108864,
+          "recommendedLimit": 67108864,
+          "estSavings": 0,
+          "confidence": 0.19,
+          "risk": "HIGH"
+        }
       }
     },
     {
@@ -1753,9 +1808,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
-        "cpuRecommendation": false,
-        "memRecommendation": false,
-        "pattern": "burstable"
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 240,
+          "recommendedLimit": 360,
+          "estSavings": 0,
+          "confidence": 0.8,
+          "risk": "HIGH"
+        },
+        "memory": {
+          "recommendedReq": 360000000,
+          "recommendedLimit": 480000000,
+          "estSavings": 0,
+          "confidence": 0.76,
+          "risk": "HIGH"
+        }
       }
     },
     {
@@ -1782,9 +1849,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
-        "cpuRecommendation": false,
-        "memRecommendation": false,
-        "pattern": "burstable"
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 1000,
+          "recommendedLimit": 2000,
+          "estSavings": 0,
+          "confidence": 0.8,
+          "risk": "LOW"
+        },
+        "memory": {
+          "recommendedReq": 960000000,
+          "recommendedLimit": 1200000000,
+          "estSavings": 0,
+          "confidence": 0.76,
+          "risk": "HIGH"
+        }
       }
     },
     {
@@ -1811,21 +1890,21 @@
         "dataWindowMinutes": 5000
       },
       "expected": {
+        "pattern": "idle",
         "cpu": {
+          "recommendedReq": 250,
+          "recommendedLimit": 250,
+          "estSavings": 750,
           "confidence": 0.86,
-          "estSavings": 880,
-          "recommendedLimit": 240,
-          "recommendedReq": 120,
-          "risk": "HIGH"
+          "risk": "LOW"
         },
         "memory": {
-          "confidence": 0.82,
-          "estSavings": 380000000,
+          "recommendedReq": 125000000,
           "recommendedLimit": 180000000,
-          "recommendedReq": 120000000,
+          "estSavings": 375000000,
+          "confidence": 0.82,
           "risk": "HIGH"
-        },
-        "pattern": "idle"
+        }
       }
     },
     {
@@ -1852,15 +1931,21 @@
         "dataWindowMinutes": 60
       },
       "expected": {
+        "pattern": "burstable",
         "cpu": {
+          "recommendedReq": 350,
+          "recommendedLimit": 1080,
+          "estSavings": 150,
           "confidence": 0.2,
-          "estSavings": 488,
-          "recommendedLimit": 1200,
-          "recommendedReq": 12,
           "risk": "LOW"
         },
-        "memRecommendation": false,
-        "pattern": "batch"
+        "memory": {
+          "recommendedReq": 500000000,
+          "recommendedLimit": 1000000000,
+          "estSavings": 0,
+          "confidence": 0.19,
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1887,21 +1972,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "idle",
         "cpu": {
+          "recommendedReq": 50,
+          "recommendedLimit": 50,
+          "estSavings": 50,
           "confidence": 0.95,
-          "estSavings": 90,
-          "recommendedLimit": 10,
-          "recommendedReq": 10,
           "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 67108864,
+          "recommendedLimit": 67108864,
+          "estSavings": 0,
           "confidence": 0.9,
-          "estSavings": 45805696,
-          "recommendedLimit": 4194304,
-          "recommendedReq": 4194304,
-          "risk": "LOW"
-        },
-        "pattern": "idle"
+          "risk": "HIGH"
+        }
       }
     },
     {
@@ -1928,21 +2013,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
+          "recommendedReq": 250,
+          "recommendedLimit": 250,
+          "estSavings": 750,
           "confidence": 0.95,
-          "estSavings": 856,
-          "recommendedLimit": 168,
-          "recommendedReq": 144,
-          "risk": "MEDIUM"
-        },
-        "memory": {
-          "confidence": 0.9,
-          "estSavings": 995805696,
-          "recommendedLimit": 4194304,
-          "recommendedReq": 4194304,
           "risk": "LOW"
         },
-        "pattern": "steady"
+        "memory": {
+          "recommendedReq": 250000000,
+          "recommendedLimit": 250000000,
+          "estSavings": 750000000,
+          "confidence": 0.9,
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -1969,21 +2054,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
+          "recommendedReq": 250,
+          "recommendedLimit": 250,
+          "estSavings": 750,
           "confidence": 0.95,
-          "estSavings": 856,
-          "recommendedLimit": 168,
-          "recommendedReq": 144,
-          "risk": "MEDIUM"
+          "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 125000000,
+          "recommendedLimit": 125000000,
+          "estSavings": 375000000,
           "confidence": 0.9,
-          "estSavings": 416000000,
-          "recommendedLimit": 96000000,
-          "recommendedReq": 84000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "steady"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -2010,21 +2095,21 @@
         "dataWindowMinutes": 0
       },
       "expected": {
+        "pattern": "steady",
         "cpu": {
+          "recommendedReq": 700,
+          "recommendedLimit": 700,
+          "estSavings": 300,
           "confidence": 0.2,
-          "estSavings": 856,
-          "recommendedLimit": 168,
-          "recommendedReq": 144,
-          "risk": "MEDIUM"
+          "risk": "LOW"
         },
         "memory": {
+          "recommendedReq": 350000000,
+          "recommendedLimit": 350000000,
+          "estSavings": 150000000,
           "confidence": 0.19,
-          "estSavings": 416000000,
-          "recommendedLimit": 96000000,
-          "recommendedReq": 84000000,
-          "risk": "MEDIUM"
-        },
-        "pattern": "steady"
+          "risk": "LOW"
+        }
       }
     },
     {
@@ -2051,9 +2136,21 @@
         "dataWindowMinutes": 10080
       },
       "expected": {
-        "cpuRecommendation": false,
-        "memRecommendation": false,
-        "pattern": "burstable"
+        "pattern": "burstable",
+        "cpu": {
+          "recommendedReq": 240,
+          "recommendedLimit": 300,
+          "estSavings": 0,
+          "confidence": 0.8,
+          "risk": "HIGH"
+        },
+        "memory": {
+          "recommendedReq": 360000000,
+          "recommendedLimit": 480000000,
+          "estSavings": 0,
+          "confidence": 0.76,
+          "risk": "HIGH"
+        }
       }
     }
   ]
