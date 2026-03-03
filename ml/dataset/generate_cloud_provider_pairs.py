@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Generate cloud provider optimization training pairs for k8s-sage.
+
+Covers AWS/EKS, GCP/GKE, Azure/AKS, cross-cloud, and FinOps
+integration for Kubernetes right-sizing decisions.
+
+Output: ml/dataset/raw/cloud_provider_pairs.jsonl
+"""
+
+import json
+from pathlib import Path
+
+SYSTEM_PROMPT = (
+    "You are k8s-sage, a Kubernetes resource efficiency specialist. "
+    "Analyse the provided workload metrics and give actionable right-sizing "
+    "recommendations. Be specific about numbers, explain your reasoning, "
+    "and flag risks."
+)
+
+OUTPUT_PATH = Path(__file__).parent / "raw" / "cloud_provider_pairs.jsonl"
+
+
+def make_pair(
+    id_str: str, user: str, assistant: str, category: str,
+    provenance: str, **extra_meta
+) -> dict:
+    """Create a validated training pair."""
+    assert len(assistant) >= 50, f"{id_str}: assistant too short ({len(assistant)} chars)"
+    assert category in ("right-sizing", "classification", "runtime-specific", "edge-case")
+    meta = {"category": category, "provenance": provenance}
+    meta.update(extra_meta)
+    return {
+        "id": id_str,
+        "source": "synthetic",
+        "system": SYSTEM_PROMPT,
+        "user": user,
+        "assistant": assistant,
+        "metadata": meta,
+    }
+
+
+# ── AWS/EKS ──────────────────────────────────────────────────────────
+
+
+def aws_eks_pairs() -> list[dict]:
+    """AWS EKS right-sizing, Karpenter, Compute Optimizer, Savings Plans, spot."""
+    p = "AWS EKS documentation and best practices"
+    pairs = []
+
+    pairs.append(make_pair("cloud-aws-right-sizing-001",
+        "How should I choose EC2 instance types for EKS worker nodes to optimize for right-sizing?",
+        "## EC2 Instance Selection for EKS Right-Sizing\n\n**Instance type determines the ceiling for pod right-sizing.** Choose based on your workload mix.\n\n**Instance families for K8s:**\n\n| Family | CPU:Memory | Best for | Cost efficiency |\n|--------|-----------|----------|----------------|\n| m6i/m7i | 1:4 (balanced) | Mixed workloads | Baseline |\n| c6i/c7i | 1:2 (CPU-heavy) | API servers, builds | -15% vs m-series for CPU workloads |\n| r6i/r7i | 1:8 (memory-heavy) | Databases, caches | -20% vs m-series for memory workloads |\n| m6g/m7g | 1:4 (ARM/Graviton) | General workloads | -20% vs x86 equivalent |\n| t3/t3a | Burstable | Dev/staging, low-util | -40% but throttled if sustained |\n\n**Sizing strategy:**\n1. Profile your workload mix: What's the aggregate CPU:memory ratio?\n   - If pods collectively request 100 CPU and 200Gi → 1:2 ratio → c-series nodes waste memory, use m-series\n   - If pods request 50 CPU and 400Gi → 1:8 ratio → r-series\n\n2. Node size affects bin-packing efficiency:\n   - Large nodes (m6i.8xlarge: 32 CPU, 128Gi): Better bin-packing, fewer nodes, less system overhead\n   - Small nodes (m6i.large: 2 CPU, 8Gi): Faster scaling, blast radius isolation, but 10-15% overhead for system pods\n\n3. **Graviton (ARM) savings**: 20% cheaper, 20% better performance per dollar. Most K8s workloads run on ARM without modification. Use `nodeSelector: kubernetes.io/arch: arm64` for eligible pods.\n\n**Right-sizing impact**: Right-sizing pods first, then choose instance type to match the new aggregate. Don't pick instances and right-size to fit — that's backwards.\n\n**Reserved capacity**: After right-sizing stabilises, buy Compute Savings Plans for baseline (70-80% of steady-state) and use on-demand/spot for the rest.",
+        "right-sizing", p))
+
+    pairs.append(make_pair("cloud-aws-right-sizing-002",
+        "How does AWS Karpenter help with node right-sizing and how does it interact with pod right-sizing?",
+        "## Karpenter and Pod Right-Sizing Synergy\n\n**Karpenter selects optimal instance types based on pending pod requirements.** When pods are right-sized, Karpenter makes better decisions.\n\n**How Karpenter works:**\n1. Watches for unschedulable pods\n2. Groups pods by requirements (architecture, GPU, zone, topology)\n3. Selects the cheapest instance type that fits the pod group\n4. Launches the instance and binds pods\n\n**Why pod right-sizing matters for Karpenter:**\n\nBefore right-sizing:\n- 10 pods requesting 4Gi each = 40Gi needed\n- Karpenter launches m6i.4xlarge (16 CPU, 64Gi) = expensive\n\nAfter right-sizing:\n- Same 10 pods now request 1Gi each = 10Gi needed\n- Karpenter launches m6i.xlarge (4 CPU, 16Gi) = 75% cheaper node\n\n**Karpenter consolidation:**\n- Karpenter periodically checks if pods can be packed onto fewer/cheaper nodes\n- Right-sized pods pack more densely → fewer nodes → lower cost\n- `consolidationPolicy: WhenUnderutilized` triggers rebalancing when nodes are <50% utilized\n\n**Configuration for right-sizing:**\n```yaml\napiVersion: karpenter.sh/v1beta1\nkind: NodePool\nspec:\n  template:\n    spec:\n      requirements:\n      - key: karpenter.k8s.aws/instance-family\n        operator: In\n        values: [m6i, m6g, c6i, c6g, r6i]  # Let Karpenter choose\n      - key: karpenter.k8s.aws/instance-size\n        operator: In\n        values: [large, xlarge, 2xlarge, 4xlarge]  # Range of sizes\n  disruption:\n    consolidationPolicy: WhenUnderutilized\n    consolidateAfter: 30s\n```\n\n**Feedback loop**: Right-size pods → Karpenter picks smaller instances → measure node utilization → if consistently >80%, pods are well-sized. If <50%, more right-sizing opportunity exists.\n\n**Important**: Karpenter's `consolidateAfter: 30s` means it will disrupt pods quickly. Ensure PodDisruptionBudgets are set for stateful workloads.",
+        "right-sizing", p))
+
+    pairs.append(make_pair("cloud-aws-right-sizing-003",
+        "How do I use AWS Compute Optimizer recommendations alongside k8s-sage for EKS right-sizing?",
+        "## AWS Compute Optimizer + k8s-sage\n\n**Compute Optimizer operates at the EC2 instance level. k8s-sage operates at the pod level.** They're complementary.\n\n**What Compute Optimizer sees:**\n- EC2 instance CPU utilization (average across all pods + system)\n- EC2 memory utilization (node-level, no per-pod breakdown)\n- Network I/O, disk I/O\n- Recommendation: \"m6i.2xlarge is over-provisioned, try m6i.xlarge\"\n\n**What Compute Optimizer misses:**\n- Per-pod resource allocation vs usage\n- Pod bin-packing efficiency\n- Individual container right-sizing opportunities\n- Workload pattern classification (steady/burstable/batch)\n\n**Integration strategy:**\n\n1. **Right-size pods first (k8s-sage)**:\n   - Reduce per-pod requests to match actual usage\n   - This changes the aggregate resource demand on each node\n\n2. **Then optimize nodes (Compute Optimizer + Karpenter)**:\n   - After pod right-sizing, nodes may be underutilized\n   - Compute Optimizer recommends smaller instances\n   - Karpenter consolidation moves pods and replaces nodes\n\n3. **Then optimize purchasing (Savings Plans)**:\n   - With stable, right-sized demand, commit to Savings Plans\n   - Compute Savings Plans: cover baseline demand at 30-50% discount\n   - EC2 Instance Savings Plans: for specific instance families, 40-60% discount\n\n**Order matters:**\n```\nPod right-sizing → Node right-sizing → Purchase optimization\n(k8s-sage)        (Compute Optimizer)  (Savings Plans/RIs)\n```\n\nDoing it backwards (buying reservations first) locks you into instance types before understanding actual pod needs.\n\n**Savings example (100-node EKS cluster):**\n- Pod right-sizing: -40% resource requests → Karpenter consolidates to 60 nodes\n- Node right-sizing: switch from m6i.2xlarge to m6i.xlarge → -50% per node\n- Savings Plans: -30% on remaining spend\n- Combined: ~70% cost reduction",
+        "right-sizing", p))
+
+    pairs.append(make_pair("cloud-aws-right-sizing-004",
+        "How should I right-size pods running on EKS Spot instances to handle interruptions?",
+        "## Spot Instance Right-Sizing for EKS\n\n**Spot instances can be reclaimed with 2 minutes notice.** Right-sizing must account for this.\n\n**Right-sizing considerations:**\n\n1. **Don't over-optimize memory on spot**: If a spot node is reclaimed, all pods restart on new nodes. Tight memory limits + cold start = OOMKill during startup spike.\n   - Rule: Spot pod memory limit = Max * 1.30 (extra headroom vs 1.20 for on-demand)\n\n2. **CPU limits on spot are fine**: CPU throttling during startup is acceptable (pod starts slower, doesn't crash).\n\n3. **Spot diversification affects right-sizing**: Karpenter should spread across 10+ instance types. Different instance types have different CPU:memory ratios.\n   - If pods request 1000m CPU and 2Gi memory (1:2 ratio), but Karpenter picks r6i.large (1:8 ratio), memory is wasted at the node level\n   - Solution: Include both c-series and m-series in Karpenter NodePool to match pod ratios\n\n**Spot-specific patterns:**\n\n| Workload type | Spot suitable? | Right-sizing approach |\n|--------------|---------------|----------------------|\n| Stateless API | Yes | Standard right-sizing + extra startup headroom |\n| Batch/CronJob | Ideal | Size for peak processing, tolerate interruption |\n| Stateful (DB) | No | Use on-demand, standard right-sizing |\n| ML training | Yes (with checkpointing) | Size for GPU/memory needs, tolerate restart |\n\n**Cost optimization:**\n- Right-sized spot: 60-90% cheaper than over-provisioned on-demand\n- Use node-termination-handler to catch 2-min warning\n- Set PodDisruptionBudgets: `minAvailable: 50%` for critical services\n- Spread replicas across 3+ AZs for availability during spot reclamation\n\n**Architecture**: Run baseline replicas on on-demand (right-sized tightly), burst replicas on spot (right-sized with headroom). HPA scales spot replicas during peaks.",
+        "right-sizing", p))
+
+    pairs.append(make_pair("cloud-aws-right-sizing-005",
+        "How do EKS Fargate pods interact with right-sizing recommendations?",
+        "## EKS Fargate Right-Sizing\n\n**Fargate allocates exact resources per pod** — there are no shared nodes. This makes right-sizing both simpler and more impactful.\n\n**How Fargate billing works:**\n- You pay for the pod's requested vCPU and memory (rounded up to supported configurations)\n- No node-level waste — but per-pod over-provisioning is expensive\n- Fargate configurations: discrete steps (0.25 vCPU + 0.5Gi, 0.5 vCPU + 1Gi, etc.)\n\n**Supported configurations (subset):**\n```\n0.25 vCPU: 0.5Gi, 1Gi, 2Gi\n0.50 vCPU: 1Gi, 2Gi, 3Gi, 4Gi\n1.00 vCPU: 2Gi, 3Gi, 4Gi, 5Gi, 6Gi, 7Gi, 8Gi\n2.00 vCPU: 4Gi through 16Gi\n4.00 vCPU: 8Gi through 30Gi\n```\n\n**Right-sizing for Fargate:**\n1. Find the actual resource need (P95 CPU, P95 memory)\n2. Round UP to the nearest Fargate configuration\n3. Cost = (vCPU * $0.04048/h) + (GB * $0.004445/h)\n\n**Example:**\n- Pod needs: 300m CPU, 600Mi memory (from k8s-sage analysis)\n- Fargate config: 0.50 vCPU + 1Gi ($0.0247/h)\n- vs original over-provisioned: 2 vCPU + 4Gi ($0.0987/h)\n- Savings: 75% per pod\n\n**Fargate-specific right-sizing rules:**\n- CPU request = CPU limit (Fargate allocates what you request)\n- Memory request = memory limit (same reason)\n- Sidecar containers count toward the total — an Envoy sidecar adds to the Fargate bill\n- Set resources precisely: 250m CPU vs 300m CPU can mean different Fargate tiers\n\n**When to use Fargate vs managed nodes:**\n- Fargate: Low-traffic services, batch jobs, dev/staging (no node management)\n- Managed nodes: High-traffic, GPU, DaemonSets, custom AMIs (more control, better bin-packing)\n\n**k8s-sage for Fargate**: Recommendations should snap to Fargate tiers. Recommending 350m CPU wastes money (rounds to 500m). Recommend 250m if workload allows, saving one tier.",
+        "right-sizing", p))
+
+    return pairs
+
+
+# ── GCP/GKE ──────────────────────────────────────────────────────────
+
+
+def gcp_gke_pairs() -> list[dict]:
+    """GCP GKE Autopilot, cost optimization, Committed Use."""
+    p = "GCP GKE documentation and best practices"
+    pairs = []
+
+    pairs.append(make_pair("cloud-gcp-right-sizing-001",
+        "How does GKE Autopilot affect right-sizing and what are its resource boundaries?",
+        "## GKE Autopilot Right-Sizing\n\n**GKE Autopilot manages nodes entirely. You only specify pod resources.** This makes pod right-sizing the ONLY lever for cost optimization.\n\n**Key constraints:**\n- Minimum per pod: 250m CPU, 512Mi memory (enforced at admission)\n- Maximum per pod: 28 vCPU, 80Gi memory (largest supported)\n- DaemonSets: Allowed but resources are billed per-node (managed by GKE)\n- GPU: Supported, but specific accelerator types only\n\n**Autopilot billing:**\n- Billed on sum of pod requests (not limits, not usage)\n- Reducing pod CPU request from 2000m to 500m = 75% cost reduction for that pod\n- Limits can exceed requests (burstable) — you only pay for requests\n\n**Right-sizing is critical in Autopilot because:**\n1. No node-level optimization (GKE handles it)\n2. You can't change instance types or node sizes\n3. Pod requests directly equal your bill\n4. Over-provisioned pods = directly over-paying\n\n**Autopilot-specific right-sizing rules:**\n- CPU: Set request to P95 * 1.20, set limit higher for burst headroom (burst is free in Autopilot, up to node capacity)\n- Memory: Set request to P95 * 1.20, set limit = request (Guaranteed QoS recommended in Autopilot to avoid eviction during node scaling)\n- Round CPU to 250m increments (Autopilot rounds up anyway)\n\n**GKE resource recommendations (built-in):**\nGKE provides resource recommendations via:\n- `gcloud container clusters describe` → recommended changes\n- Cloud Console → Workloads → Resource recommendations\n- These are VPA-based, similar to k8s-sage L1 but without pattern classification or runtime awareness\n\n**k8s-sage advantage over GKE built-in**: GKE recommendations are generic percentile-based. k8s-sage adds runtime-aware sizing (JVM, Go, etc.), workload pattern classification, and safety floors calibrated for production.",
+        "right-sizing", p))
+
+    pairs.append(make_pair("cloud-gcp-right-sizing-002",
+        "How do GKE Committed Use Discounts interact with right-sizing strategy?",
+        "## GKE CUDs and Right-Sizing Order\n\n**Committed Use Discounts (CUDs) give 1-year (37% discount) or 3-year (55% discount) savings** on compute resources. Right-sizing BEFORE committing is critical.\n\n**Why order matters:**\n\n**Wrong order (commit first):**\n1. Buy CUD for 1000 vCPU based on current usage\n2. Right-size pods → actual need is 400 vCPU\n3. 600 vCPU of CUD is wasted (you pay regardless)\n4. Loss: 600 vCPU * committed rate for 1-3 years\n\n**Right order (right-size first):**\n1. Right-size pods → actual need is 400 vCPU\n2. Wait 30 days to confirm stable demand\n3. Buy CUD for 320 vCPU (80% of right-sized baseline)\n4. Use on-demand/spot for the remaining 80 vCPU (variable demand)\n\n**CUD sizing formula:**\n```\nCUD_amount = right_sized_baseline * 0.80\n```\nThe 0.80 factor accounts for: seasonal variation, future right-sizing improvements, and workload changes.\n\n**GKE-specific CUD types:**\n\n| Type | Discount | Flexibility | Best for |\n|------|----------|------------|----------|\n| Compute CUD | 37%/55% | Any machine type in region | General K8s |\n| Machine-type CUD | 40%/57% | Specific machine family | If workload is stable |\n\n**For GKE Autopilot:** CUDs apply to pod-level resource billing. Right-sized pods mean smaller CUD commitments.\n\n**Recommendation**: Right-size all workloads (k8s-sage), monitor for 30 days, then commit 80% of the new baseline to CUDs. Review quarterly — further right-sizing may allow CUD downgrades at renewal.",
+        "right-sizing", p))
+
+    pairs.append(make_pair("cloud-gcp-right-sizing-003",
+        "How do I right-size workloads on GKE with preemptible or spot VMs?",
+        "## GKE Spot VM Right-Sizing\n\n**GKE Spot VMs are 60-91% cheaper** but can be preempted at any time. Right-sizing strategy must account for disruption.\n\n**Right-sizing considerations for Spot:**\n\n1. **Memory headroom on restart:** When a spot node is preempted, pods cold-start on a new node. Some runtimes (JVM, .NET) have high startup memory.\n   - Standard headroom: P95 * 1.20\n   - Spot headroom: P95 * 1.30 (extra 10% for startup)\n\n2. **CPU during rescheduling:** Multiple pods starting simultaneously on a new node compete for CPU. Brief throttling is acceptable.\n\n3. **QoS class matters more on spot:**\n   - Guaranteed (request=limit): Best for spot. Pod won't be evicted due to resource pressure.\n   - Burstable: Acceptable if the node has headroom.\n   - BestEffort: Avoid on spot. First to be evicted during node pressure.\n\n**Architecture for spot + right-sizing:**\n```\nOn-demand node pool (30% of capacity):\n  - Stateful workloads (databases, queues)\n  - Right-size tightly (standard headroom)\n  - Guaranteed QoS\n\nSpot node pool (70% of capacity):\n  - Stateless services\n  - Right-size with spot headroom (+10%)\n  - Spread across 3+ zones\n  - PDB: minAvailable 50%\n```\n\n**Savings calculation:**\n- Before: 100 pods on on-demand, over-provisioned by 3x → $10,000/mo\n- After right-sizing: 100 pods need 1/3 resources → $3,333/mo\n- After spot migration (70% spot): 30 on-demand + 70 spot → $1,600/mo\n- Total savings: 84%\n\n**GKE-specific**: Use `gcloud container node-pools create --spot` or Karpenter (if using Karpenter on GKE). GKE's NAP (Node Auto-Provisioning) also supports spot with `--enable-autoprovisioning --spot`.",
+        "right-sizing", p))
+
+    pairs.append(make_pair("cloud-gcp-right-sizing-004",
+        "How does GKE resource bin-packing efficiency affect right-sizing decisions?",
+        "## GKE Bin-Packing and Right-Sizing\n\n**Bin-packing efficiency = percentage of node resources allocated to pod requests.** Higher = better utilization.\n\n**Typical bin-packing efficiency:**\n\n| Scenario | CPU efficiency | Memory efficiency | Cause |\n|----------|---------------|-------------------|-------|\n| Over-provisioned pods | 30-50% | 20-40% | Pods request too much |\n| Right-sized pods, wrong nodes | 60-70% | 50-60% | CPU:memory ratio mismatch |\n| Right-sized pods, matched nodes | 80-90% | 70-80% | Optimal |\n| Perfect packing (theoretical) | 95% | 90% | 5-10% reserved for system |\n\n**Why 100% is impossible:**\n- kubelet reserves: 100m CPU + 100Mi memory (varies by node size)\n- kube-proxy: ~100m CPU, 128Mi memory\n- System pods (CoreDNS, etc.): ~200m CPU, 256Mi per node\n- Total system overhead: 5-15% of node resources\n\n**Improving bin-packing after right-sizing:**\n\n1. **Identify stranded resources**: Run `kubectl top nodes` — if nodes show 90% CPU allocated but 30% memory allocated, the bottleneck is CPU. Pods requesting too much CPU strand the memory.\n\n2. **Match node type to workload ratio**:\n   - Calculate: total_pod_cpu_requests / total_pod_memory_requests = cluster ratio\n   - If ratio ≈ 1:4 → m-series nodes\n   - If ratio ≈ 1:2 → c-series nodes\n   - If ratio ≈ 1:8 → r-series nodes\n\n3. **Mixed node pools**: Run two node pools with different instance types. Let the scheduler bin-pack optimally.\n\n4. **Pod topology constraints**: Use `topologySpreadConstraints` to prevent replicas from stacking on one node (wastes capacity on other nodes).\n\n**GKE Autopilot**: Bin-packing is managed by GKE. Your only lever is pod right-sizing. The more precisely you set pod resources, the better Autopilot packs.\n\n**Metric to track**: `(sum of pod CPU requests on node) / (node allocatable CPU)` × 100 = bin-packing efficiency per node.",
+        "right-sizing", p))
+
+    return pairs
+
+
+# ── Azure/AKS ────────────────────────────────────────────────────────
+
+
+def azure_aks_pairs() -> list[dict]:
+    """Azure AKS Advisor, Container Insights, Spot VMs."""
+    p = "Azure AKS documentation and best practices"
+    pairs = []
+
+    pairs.append(make_pair("cloud-azure-right-sizing-001",
+        "How do Azure Advisor recommendations for AKS relate to pod-level right-sizing?",
+        "## Azure Advisor + AKS Right-Sizing\n\n**Azure Advisor provides node-pool-level recommendations.** Pod-level right-sizing is complementary.\n\n**What Azure Advisor recommends:**\n- Node pool VM size changes (e.g., \"your D4s_v5 nodes are underutilized, try D2s_v5\")\n- Node count adjustments (e.g., \"reduce from 5 to 3 nodes\")\n- Based on 7-14 days of node-level CPU/memory utilization\n\n**What Advisor misses:**\n- Per-pod resource allocation vs actual usage\n- Whether pod requests match pod usage (the root cause of node underutilization)\n- Runtime-specific sizing (JVM heap, Go GC, etc.)\n- Workload pattern classification\n\n**Integration approach:**\n\n1. **Start with pod right-sizing (k8s-sage)**:\n   - Analyze each workload's actual CPU/memory usage\n   - Reduce requests to match (P95 * 1.20 for most workloads)\n   - This changes the aggregate demand on each node\n\n2. **Re-check Azure Advisor after 7 days**:\n   - Node utilization metrics have changed\n   - Advisor may now recommend smaller VMs or fewer nodes\n   - Implement Advisor's node-level recommendations\n\n3. **Enable Container Insights for ongoing monitoring**:\n   - Container Insights provides per-container metrics in Azure Monitor\n   - Query: `KubePodInventory | where ClusterName == 'mycluster' | summarize avg(CPUUsageNanoCores) by Name`\n   - Use these metrics to validate right-sizing recommendations\n\n**Azure Advisor cost analysis:**\nAdvisor shows estimated monthly savings. After pod right-sizing + node right-sizing:\n- Typical AKS cluster: 40-60% cost reduction\n- Advisor focuses on the node savings, k8s-sage enables the pod savings that make node savings possible\n\n**AKS-specific**: Enable Azure Policy for Kubernetes to enforce resource requests/limits. Prevents new deployments from being over-provisioned.",
+        "right-sizing", p))
+
+    pairs.append(make_pair("cloud-azure-right-sizing-002",
+        "How do Azure Container Insights metrics help with right-sizing in AKS?",
+        "## Container Insights for AKS Right-Sizing\n\n**Container Insights collects per-container metrics into Azure Monitor / Log Analytics.** These are the data source for right-sizing.\n\n**Key metrics for right-sizing:**\n\n```kusto\n// CPU usage vs request (identify over-provisioning)\nPerf\n| where ObjectName == \"K8SContainer\"\n| where CounterName == \"cpuUsageNanoCores\"\n| summarize P50=percentile(CounterValue, 50),\n            P95=percentile(CounterValue, 95),\n            P99=percentile(CounterValue, 99),\n            Max=max(CounterValue)\n  by ContainerName, bin(TimeGenerated, 1h)\n\n// Memory working set vs request\nPerf\n| where ObjectName == \"K8SContainer\"\n| where CounterName == \"memoryWorkingSetBytes\"\n| summarize P50=percentile(CounterValue, 50),\n            P95=percentile(CounterValue, 95),\n            Max=max(CounterValue)\n  by ContainerName, bin(TimeGenerated, 1h)\n\n// OOMKill detection\nKubeEvents\n| where Reason == \"OOMKilling\"\n| summarize count() by Name, bin(TimeGenerated, 1d)\n```\n\n**Container Insights limitations for right-sizing:**\n1. Default collection interval: 1 minute (may miss sub-minute spikes)\n2. Data retention: 30 days in basic tier, 90 days in standard\n3. No workload pattern classification (steady/burstable/batch)\n4. No runtime-aware analysis (doesn't know JVM heap vs off-heap)\n\n**Integration with k8s-sage:**\n- Container Insights provides the raw metrics\n- k8s-sage interprets them with runtime context and pattern classification\n- Export metrics: Use Azure Monitor API or Prometheus integration (AKS supports managed Prometheus)\n\n**Cost of monitoring:**\n- Container Insights ingestion: ~$2.76/GB\n- A 50-node cluster generates ~5-10GB/day = $14-28/day\n- Enable cost optimization: filter unnecessary metrics, reduce collection frequency for non-critical namespaces\n- The monitoring cost is typically recovered within 1 week from the right-sizing savings it enables",
+        "right-sizing", p))
+
+    pairs.append(make_pair("cloud-azure-right-sizing-003",
+        "How should I configure AKS node pools for optimal right-sizing with Azure Spot VMs?",
+        "## AKS Spot Node Pools for Right-Sizing\n\n**AKS supports Spot VM node pools** with up to 90% discount, but VMs can be evicted.\n\n**Node pool architecture for right-sizing:**\n\n```\nSystem node pool (on-demand, D4s_v5):\n  - CoreDNS, metrics-server, k8s-sage agent\n  - min 2 nodes, max 3\n  - No user workloads (taint: CriticalAddonsOnly)\n\nProduction node pool (on-demand, D8s_v5):\n  - Stateful workloads, databases\n  - Right-sized with standard headroom\n  - Guaranteed QoS where possible\n\nBurst node pool (Spot, D4s_v5):\n  - Stateless services, batch jobs\n  - Right-sized with spot headroom (+10%)\n  - --priority Spot --eviction-policy Delete\n  - --spot-max-price -1 (pay up to on-demand price)\n```\n\n**Azure-specific Spot considerations:**\n\n1. **Eviction policy: Delete vs Deallocate**\n   - Delete: VM is removed, AKS creates new one. Faster recovery.\n   - Deallocate: VM stays allocated (you pay for disk). Not useful for AKS.\n   - Always use `--eviction-policy Delete` for AKS.\n\n2. **Spot VM availability varies by region and VM size:**\n   - D-series in West Europe: high availability, low eviction rate\n   - GPU VMs: low availability, high eviction rate\n   - Use multiple VM sizes in node pool: `--node-vm-size Standard_D4s_v5,Standard_D4as_v5`\n\n3. **Right-sizing for Spot eviction recovery:**\n   - Memory request: P95 * 1.30 (extra for cold start)\n   - Pod anti-affinity: Spread replicas across nodes\n   - PDB: `minAvailable: 2` for critical services\n   - Pre-pull images on spot nodes (use DaemonSet with image puller)\n\n**Savings estimate:**\n- Before: 20 D8s_v5 on-demand, over-provisioned → $8,000/mo\n- After: 3 D4s_v5 on-demand + 10 D4s_v5 Spot, right-sized → $1,800/mo\n- Savings: 78%",
+        "right-sizing", p))
+
+    pairs.append(make_pair("cloud-azure-right-sizing-004",
+        "Workload: deployment/dotnet-api on AKS\nNode: Standard_D4s_v5 (4 vCPU, 16Gi)\nReplicas: 3\nCPU Request: 2000m, Limit: 4000m\nMemory Request: 8Gi, Limit: 8Gi\nCPU Usage (7d): P50=300m, P95=800m, P99=1100m, Max=1500m\nMemory Usage (7d): P50=2.5Gi, P95=3.0Gi, P99=3.5Gi, Max=4.0Gi\nRuntime: .NET 6, Server GC, DOTNET_PROCESSOR_COUNT not set\nPattern: Steady",
+        "## Analysis\n\n**Node-level waste**: Each pod requests 2000m CPU + 8Gi memory on a 4 vCPU, 16Gi node. One pod consumes 50% CPU allocation and 50% memory allocation of the entire node. With system overhead, only 1 pod per node. 3 replicas = 3 nodes.\n\n**Pod-level waste**: CPU usage P95=800m against 2000m request = 60% over-provisioned. Memory usage Max=4Gi against 8Gi request = 50% over-provisioned.\n\n**.NET 6 issue**: Server GC without DOTNET_PROCESSOR_COUNT on D4s_v5 (4 vCPU). .NET sees 4 cores (correct for this node), creates 4 GC heaps. This is reasonable for a 4-core node but wasteful if we reduce CPU.\n\n## Recommendations\n\n**Step 1 - Fix .NET config:**\n- Set `DOTNET_PROCESSOR_COUNT=1` (for 1000m target CPU)\n- Or upgrade to .NET 8 for auto-detection\n\n**Step 2 - Right-size pods (after .NET fix, re-measure 7d):**\n- Expected new metrics: CPU P95 ~650m, Memory P95 ~2.5Gi\n- CPU: Request=780m (P95 * 1.20). Limit=1875m (Max * 1.25).\n- Memory: Request=3Gi (P95 * 1.20). Limit=5Gi (Max * 1.25).\n\n**Step 3 - Right-size nodes:**\n- With right-sized pods: 780m CPU + 3Gi per pod\n- 3 pods fit on one D4s_v5 (4 CPU, 16Gi): 2340m CPU, 9Gi memory\n- Reduce from 3 nodes to 2 nodes (1 for pods, 1 for redundancy)\n\n**Savings:**\n- CPU: 1220m request per pod = 3660m total\n- Memory: 5Gi request per pod = 15Gi total\n- Nodes: 3 → 2 = 33% infrastructure reduction\n- Combined monthly savings: ~$150/mo (D4s_v5 ≈ $140/mo each)",
+        "right-sizing", p, runtime="dotnet", pattern="steady"))
+
+    return pairs
+
+
+# ── Cross-Cloud ──────────────────────────────────────────────────────
+
+
+def cross_cloud_pairs() -> list[dict]:
+    """Multi-cloud strategy, portability, instance selection, ARM/Graviton."""
+    p = "Cross-cloud Kubernetes best practices"
+    pairs = []
+
+    pairs.append(make_pair("cloud-cross-right-sizing-001",
+        "How do I make right-sizing recommendations portable across cloud providers?",
+        "## Portable Right-Sizing Across Clouds\n\n**Right-sizing at the pod level is inherently portable.** Pod resource requests/limits are Kubernetes-native and work identically on EKS, GKE, AKS, and on-premises.\n\n**What's portable:**\n- CPU requests/limits (millicores) → identical across all clouds\n- Memory requests/limits (Mi/Gi) → identical across all clouds\n- QoS classes (Guaranteed/Burstable/BestEffort) → same scheduler behaviour\n- HPA/VPA configurations → Kubernetes-native, provider-agnostic\n- Pod metrics (cpu, memory, working_set) → same metrics everywhere\n\n**What's NOT portable:**\n- Instance type selection (m6i.xlarge vs n2-standard-4 vs D4s_v5)\n- Spot/preemptible pricing and interruption rates\n- Savings Plans/CUDs/Reserved Instances\n- Managed features (GKE Autopilot, Fargate)\n- Node-level optimizations (Graviton, AMD EPYC)\n\n**Portable right-sizing strategy:**\n\n1. **Use k8s-sage at the pod level** — recommendations are cloud-agnostic:\n   ```\n   CPU request: 500m → 500m on any cloud\n   Memory request: 2Gi → 2Gi on any cloud\n   ```\n\n2. **Abstract node selection** — use Karpenter (multi-cloud) or cluster autoscaler:\n   ```yaml\n   nodeSelector:\n     kubernetes.io/arch: amd64  # Portable\n   # NOT: node.kubernetes.io/instance-type: m6i.xlarge  # AWS-specific\n   ```\n\n3. **Use labels for cloud-specific optimizations:**\n   ```yaml\n   nodeAffinity:\n     preferredDuringScheduling:\n     - weight: 50\n       preference:\n         matchExpressions:\n         - key: kubernetes.io/arch\n           operator: In\n           values: [arm64]  # Prefer ARM for cost savings\n   ```\n\n**Multi-cloud right-sizing workflow:**\n1. Right-size pods (cloud-agnostic) → apply to all clusters\n2. Optimize nodes per cloud → cloud-specific instance types\n3. Purchase discounts per cloud → cloud-specific commitments",
+        "right-sizing", p))
+
+    pairs.append(make_pair("cloud-cross-right-sizing-002",
+        "How do ARM/Graviton nodes affect right-sizing for Kubernetes workloads?",
+        "## ARM/Graviton Right-Sizing Impact\n\n**ARM processors (AWS Graviton, GCP Tau T2A, Azure Cobalt 100) are 20-40% cheaper** per vCPU than x86. Right-sizing on ARM requires understanding performance differences.\n\n**Performance characteristics:**\n\n| Workload type | ARM vs x86 performance | CPU right-sizing adjustment |\n|--------------|----------------------|----------------------------|\n| Web/API (I/O-bound) | ~Equal | No adjustment needed |\n| JVM workloads | 5-10% better on Graviton3 | May reduce CPU request 5-10% |\n| Go workloads | ~Equal to 5% better | No adjustment needed |\n| Python | ~Equal (GIL limits both) | No adjustment needed |\n| Node.js | ~Equal | No adjustment needed |\n| Compression (gzip) | 30-50% better (NEON) | Reduce CPU request 25-35% |\n| Encryption (TLS) | 20-30% better (crypto ext) | Reduce CPU request 15-20% |\n| ML inference | Varies (check framework) | Measure before right-sizing |\n\n**Right-sizing for ARM migration:**\n\n1. **Before migration** (on x86): Right-size with k8s-sage (establish baseline)\n2. **Deploy on ARM**: Use multi-arch images + nodeSelector\n3. **Re-measure for 7 days**: CPU profile may differ\n4. **Re-right-size**: Adjust based on ARM-specific measurements\n\n**Cost comparison (same workload):**\n```\nx86 (m6i.xlarge): 4 vCPU, $0.192/hr → right-sized pod: 500m = $0.024/hr\nARM (m6g.xlarge): 4 vCPU, $0.154/hr → right-sized pod: 500m = $0.019/hr\nSavings: 20% cheaper per CPU-hour on ARM\n```\n\n**Common pitfalls:**\n- Not all container images support ARM. Check with `docker manifest inspect <image>`\n- Native dependencies (C extensions) need ARM compilation\n- Some ML frameworks have incomplete ARM support (check PyTorch/TF ARM builds)\n- Java: Use JDK 17+ for best ARM performance (JIT optimizations for ARM)\n\n**Strategy**: Right-size first (bigger savings), migrate to ARM second (incremental savings). Don't migrate to ARM before right-sizing — the per-unit savings are smaller.",
+        "right-sizing", p))
+
+    pairs.append(make_pair("cloud-cross-right-sizing-003",
+        "How should I approach right-sizing differently for managed Kubernetes services vs self-managed clusters?",
+        "## Managed vs Self-Managed Right-Sizing\n\n**Managed K8s (EKS, GKE, AKS) and self-managed (kubeadm, k3s, Rancher) have different optimization surfaces.**\n\n**Managed K8s right-sizing:**\n\n| What you control | What the provider controls |\n|-----------------|---------------------------|\n| Pod requests/limits | Control plane sizing |\n| HPA/VPA configuration | etcd performance |\n| Node pool instance types | kube-apiserver scaling |\n| Node pool auto-scaling | CoreDNS scaling |\n| Spot/preemptible mix | System component resources |\n\nFocus: Pod right-sizing → node pool optimization → purchase discounts.\n\n**Self-managed right-sizing:**\n\n| What you control | Additional optimization surface |\n|-----------------|-------------------------------|\n| Everything above | Control plane node sizing |\n| | etcd resource allocation |\n| | kubelet reserved resources |\n| | System component right-sizing |\n| | CoreDNS replicas and resources |\n| | Ingress controller sizing |\n\n**Self-managed extras to right-size:**\n\n1. **etcd**: Size based on DB size + watch count. Typically 2-4Gi memory, 2-4 CPU per node.\n2. **kube-apiserver**: Scale with cluster size. 100 nodes: 1Gi/2CPU. 1000 nodes: 4Gi/8CPU.\n3. **kubelet reserved**: Default is generous. On a 16Gi node, kubelet reserves 1.6Gi. Tune `--system-reserved` and `--kube-reserved` based on actual system usage.\n4. **CoreDNS**: 1 replica per 256 pods (GKE default). Over-provisioned on small clusters.\n\n**Right-sizing savings comparison:**\n\n| Optimization | Managed K8s | Self-managed |\n|-------------|------------|---------------|\n| Pod right-sizing | 30-50% savings | 30-50% savings |\n| Node optimization | 10-20% savings | 10-20% savings |\n| Control plane | Not applicable | 5-10% savings |\n| System components | Limited | 5-15% savings |\n| Total potential | 40-60% | 50-75% |\n\n**Recommendation**: Start with pod right-sizing regardless of platform. It's the largest savings and fully portable between managed and self-managed.",
+        "right-sizing", p))
+
+    return pairs
+
+
+# ── FinOps ───────────────────────────────────────────────────────────
+
+
+def finops_pairs() -> list[dict]:
+    """FinOps + K8s right-sizing integration."""
+    p = "FinOps Foundation Kubernetes best practices"
+    pairs = []
+
+    pairs.append(make_pair("cloud-finops-right-sizing-001",
+        "How does FinOps integrate with Kubernetes right-sizing for cost optimization?",
+        "## FinOps + Kubernetes Right-Sizing\n\n**FinOps is the practice of bringing financial accountability to cloud spending.** K8s right-sizing is one of the highest-impact FinOps activities.\n\n**FinOps framework for K8s:**\n\n**1. Inform (visibility):**\n- Tag namespaces with cost centers: `labels: team: backend, cost-center: engineering`\n- Track per-namespace, per-team resource consumption\n- Show delta: requested resources vs used resources = waste\n- Metric: `k8s_cost_efficiency = sum(resource_usage) / sum(resource_requests) * 100`\n- Typical starting point: 20-30% efficiency (70-80% waste)\n\n**2. Optimize (action):**\n- Right-size pods: Reduce requests to match usage (k8s-sage)\n- Right-size nodes: Match instance types to workload mix\n- Optimize purchasing: Savings Plans/CUDs after stabilization\n- Target: 60-70% efficiency (30-40% waste, which includes necessary headroom)\n\n**3. Operate (governance):**\n- Set resource budgets per namespace/team\n- Enforce resource requests via admission controllers\n- Alert on efficiency drops (new deployments with default resources)\n- Review quarterly with team leads showing cost trends\n\n**Chargeback model for K8s:**\n```\nTeam cost = (team_cpu_requests / total_cpu_requests) * total_compute_cost\n         + (team_memory_requests / total_memory_requests) * total_compute_cost\n```\n\n**Why requests, not usage?** Requests reserve capacity on the scheduler. Over-requesting blocks other pods, even if resources aren't used. Teams should be charged for what they reserve.\n\n**Impact of right-sizing on FinOps:**\n- Before: Team reserves 100 CPU, uses 30 CPU. Charged for 100.\n- After right-sizing: Team reserves 40 CPU, uses 30 CPU. Charged for 40.\n- Savings: 60% reduction in chargeback, matching actual consumption.\n\n**Tooling**: OpenCost for allocation data, k8s-sage for right-sizing recommendations, Grafana dashboards for team visibility. Feed all into FinOps platform (CloudHealth, Spot.io, Kubecost).",
+        "right-sizing", p))
+
+    pairs.append(make_pair("cloud-finops-right-sizing-002",
+        "How do I build a right-sizing culture within engineering teams using FinOps practices?",
+        "## Building a Right-Sizing Culture\n\n**Right-sizing fails when it's a one-time exercise.** Sustainable savings require engineering teams to own their resource efficiency.\n\n**Common anti-patterns:**\n- Platform team right-sizes everything, devs override with 10x resources \"just in case\"\n- No visibility: teams don't know what they spend\n- No incentive: over-provisioning has no consequence\n- Fear: \"if I reduce resources, my service will crash\"\n\n**FinOps practices that work:**\n\n**1. Visibility dashboards (per team):**\n```\nTeam: Backend\nNamespaces: backend-prod, backend-staging\nMonthly compute cost: $12,400\nResource efficiency: 28% (CPU), 35% (memory)\nPotential savings: $7,800/mo (from k8s-sage analysis)\nTop wasteful deployments:\n  1. user-service: 4000m requested, 200m used → $2,100/mo waste\n  2. auth-service: 8Gi requested, 1Gi used → $1,800/mo waste\n```\n\n**2. Default resource templates:**\n- Provide starter templates with reasonable defaults\n- Small: 100m CPU, 128Mi memory (sidecar, utility)\n- Medium: 500m CPU, 512Mi memory (typical API)\n- Large: 2000m CPU, 4Gi memory (heavy processing)\n- Teams override from informed defaults, not arbitrary guesses\n\n**3. Resource efficiency SLO:**\n- SLO: \"80% of namespaces must maintain >50% resource efficiency\"\n- Alert when new deployments drop efficiency below threshold\n- Include in sprint retrospectives alongside reliability SLOs\n\n**4. Gamification:**\n- Monthly leaderboard: team with best efficiency improvement\n- Show absolute dollar savings per team\n- Recognize teams that achieve >60% efficiency\n\n**5. Guardrails (admission controllers):**\n- Reject pods without resource requests\n- Warn on requests > 2x historical P95 usage\n- Block requests > namespace quota\n\n**Timeline to culture shift:**\n- Month 1: Deploy visibility (dashboards, cost allocation)\n- Month 2: Platform team right-sizes top 10 wasteful workloads (demonstrate savings)\n- Month 3: Teams receive training + k8s-sage access\n- Month 4-6: Teams self-serve right-sizing, platform team reviews\n- Month 7+: Efficiency SLO enforced, quarterly reviews",
+        "right-sizing", p))
+
+    return pairs
+
+
+# ── Main ─────────────────────────────────────────────────────────────
+
+
+def generate_all() -> list[dict]:
+    """Collect all cloud provider pairs."""
+    all_pairs = []
+    all_pairs.extend(aws_eks_pairs())
+    all_pairs.extend(gcp_gke_pairs())
+    all_pairs.extend(azure_aks_pairs())
+    all_pairs.extend(cross_cloud_pairs())
+    all_pairs.extend(finops_pairs())
+
+    # Validate
+    ids = set()
+    for pair in all_pairs:
+        pid = pair["id"]
+        assert pid not in ids, f"Duplicate ID: {pid}"
+        ids.add(pid)
+        assert len(pair["assistant"]) >= 50, f"{pid}: assistant too short"
+        assert pair["metadata"]["category"] in (
+            "right-sizing", "classification", "runtime-specific", "edge-case"
+        ), f"{pid}: bad category"
+        assert pair["metadata"].get("provenance"), f"{pid}: missing provenance"
+
+    # Write
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(OUTPUT_PATH, "w") as f:
+        for pair in all_pairs:
+            f.write(json.dumps(pair) + "\n")
+
+    print(f"Wrote {len(all_pairs)} cloud provider pairs -> {OUTPUT_PATH}")
+    return all_pairs
+
+
+if __name__ == "__main__":
+    pairs = generate_all()
+    cats = {}
+    for p in pairs:
+        c = p["metadata"]["category"]
+        cats[c] = cats.get(c, 0) + 1
+    print("Pairs by category:")
+    for cat, count in sorted(cats.items()):
+        print(f"  {cat}: {count}")

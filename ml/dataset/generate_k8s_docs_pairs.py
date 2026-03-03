@@ -52,7 +52,7 @@ def make_pair(id_str, user, assistant, category, provenance, **extra_meta):
     meta.update(extra_meta)
     return {
         "id": id_str,
-        "source": "k8s-docs",
+        "source": "synthetic",
         "system": SYSTEM_PROMPT,
         "user": user,
         "assistant": assistant,

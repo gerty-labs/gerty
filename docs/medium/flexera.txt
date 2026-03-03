@@ -1,0 +1,71 @@
+In-place pod rightsizing: How to save K8s resources without missing a beat
+Li-Or Amir
+June 27, 2025
+  
+In-place pod rightsizing: How to save K8s resources without missing a beat
+On this page
+Why it matters
+Just launched: In-place K8s pod rightsizing
+But wait, there’s more
+View real rightsizing savings
+Rightsizing for everyone
+Kubernetes has revolutionized how we deploy and manage applications, but it also brings  challenges. How can you stay resource-efficient when needs change by the minute?
+
+Over the past year, Flexera has been perfecting  automated rightsizing to solve just this challenge. Today, we’re excited to announce Spot Ocean’s new, in-place automated rightsizing for a seamless rightsizing experience, along with several other powerful new capabilities.
+
+Why it matters
+Automated rightsizing isn’t just about saving money—it’s about operational efficiency, performance and sustainability. By continuously aligning resource allocation with actual usage, you reduce waste. Doing this without restarting your pods means you also fortify application stability and uptime.
+
+Whether you’re managing a few clusters or hundreds, Ocean’s automated rightsizing gives you the tools to optimize at scale with minimal effort.
+
+Just launched: In-place K8s pod rightsizing
+Today, we’re introducing a game-changing enhancement: in-place automated rightsizing. Built on Kubernetes 1.33 and the latest VPA release, this feature allows Ocean to apply rightsizing recommendations live, without needing to restart workloads.
+
+This is especially valuable for volatile workloads, where resource demands are dictated by brief, high peaks. Traditionally, these peaks force you to provision for the worst-case scenario, leading to significant waste during idle periods. With in-place rightsizing, Ocean can adjust resources as soon as the peak is over, unlocking substantial savings.
+
+Popular use cases for in-place rightsizing:
+
+Spikey, bursty workloads: Until now, the spikes have dictated the CPU requirements for the workload’s entire lifespan. A classic example is Java workloads, which often exhibit early CPU spikes during startup. These spikes can skew traditional rightsizing recommendations, leading to overprovisioning. In-place rightsizing allows for immediate CPU decrease once the spike is through.
+High-SLA, mission-critical, and otherwise fault-sensitive services: Such services cannot tolerate restarts, and therefore in-place rightsizing gives them the ability, for the first time, to optimize resource requirements.
+
+
+Ocean applies auto-rightsizing as soon as the resource demand peak is over.
+
+But wait, there’s more
+Ocean’s auto-rightsizing keeps evolving to give you a hands-free, laser-precise rightsizing experience. Check out these three new enhancements.
+
+1. Auto-attach rules for new workloads
+
+Rightsizing rules can now be set per label and namespace. Ocean will auto-attach them to any new workload with that label or namespace. This saves the need to manually set rightsizing rules for each workload individually, dramatically reducing manual work and ensuring consistent optimization across your environment.
+
+
+
+2. Customizable sampling for precision control 
+
+Not all workloads are created equal. Some can tolerate aggressive downscaling, while others require a more conservative approach. That’s why we’ve added the ability to set the aggressiveness of rightsizing rules using sample percentiles.
+
+Aggressive settings (as low as the 85th percentile) ignore anomalous spikes, focusing on typical usage patterns. This results in lower recommended CPU and memory values—ideal for workloads with predictable behavior.
+Conservative settings (up to the 99th percentile or maximum percentile) take all usage data into account, including peaks. This is better suited for workloads with variable or unpredictable demand.
+These settings can be applied at both workload and cluster levels, providing granular control over how rightsizing is applied across your infrastructure.
+
+3. Harmony with HPA 
+
+One of the most common concerns with automated rightsizing is how it interacts with Kubernetes’ Horizontal Pod Autoscaler (HPA).  Ocean’s Vertical Pod Autoscaler (VPA) recommendations take HPA triggers into account. This ensures that your autoscaling strategies work together, not against each other.
+
+
+
+View real rightsizing savings
+Curious how much auto-rightsizing actually saves you? We hear you. With the new savings tab, you can see exactly what costs were avoided by Ocean’s memory and CPU auto-rightsizing. To pinpoint the sources of overprovisioning, the results include a breakdown by namespaces and can be filtered by namespace and workload.
+
+
+
+Rightsizing for everyone
+With this release, all users—regardless of plan—can now benefit from basic access to automatic rightsizing. This means you can:
+
+Apply automatic rules to selected workloads
+Choose whether to include or exclude anomalous usage peaks or valleys, at both the workload and cluster level
+View potential and actual savings from rightsizing actions
+This basic access, limited to 10 workloads per cluster, provides a taste of the full power of automated optimization, enabling you to identify inefficiencies and act on them with confidence.
+
+Ocean customers can upgrade to the unlimited version by contacting your account team.
+

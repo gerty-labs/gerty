@@ -41,7 +41,7 @@
         },
         "runtime": {
           "type": "string",
-          "enum": ["jvm", "go", "python", "node", "generic"],
+          "enum": ["jvm", "go", "python", "node", "generic", "dotnet", "rust", "ruby", "php", "cpp", "erlang", "scala", "wasm"],
           "description": "Runtime-specific if applicable"
         },
         "pattern": {

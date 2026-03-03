@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""Generate infrastructure and container runtime training pairs for k8s-sage.
+
+Covers cgroups v2, container runtimes, Karpenter, Cluster Autoscaler,
+and node-level resource management for Kubernetes right-sizing.
+
+Output: ml/dataset/raw/infra_container_pairs.jsonl
+"""
+
+import json
+from pathlib import Path
+
+SYSTEM_PROMPT = (
+    "You are k8s-sage, a Kubernetes resource efficiency specialist. "
+    "Analyse the provided workload metrics and give actionable right-sizing "
+    "recommendations. Be specific about numbers, explain your reasoning, "
+    "and flag risks."
+)
+
+OUTPUT_PATH = Path(__file__).parent / "raw" / "infra_container_pairs.jsonl"
+
+
+def make_pair(
+    id_str: str, user: str, assistant: str, category: str,
+    provenance: str, **extra_meta
+) -> dict:
+    """Create a validated training pair."""
+    assert len(assistant) >= 50, f"{id_str}: assistant too short ({len(assistant)} chars)"
+    assert category in ("right-sizing", "classification", "runtime-specific", "edge-case")
+    meta = {"category": category, "provenance": provenance}
+    meta.update(extra_meta)
+    return {
+        "id": id_str,
+        "source": "synthetic",
+        "system": SYSTEM_PROMPT,
+        "user": user,
+        "assistant": assistant,
+        "metadata": meta,
+    }
+
+
+# ── cgroups v2 ───────────────────────────────────────────────────────
+
+
+def cgroups_v2_pairs() -> list[dict]:
+    """cgroups v2 memory/CPU controls, OOM scoring, PSI."""
+    p = "Linux kernel cgroups v2 documentation and K8s integration"
+    pairs = []
+
+    pairs.append(make_pair("infra-cgroups-right-sizing-001",
+        "How do cgroups v2 memory controls (memory.max, memory.high) affect right-sizing in Kubernetes?",
+        "## cgroups v2 Memory Controls for Right-Sizing\n\n**cgroups v2 has two memory controls that Kubernetes maps to:**\n\n1. **memory.max** (hard limit) ← Kubernetes `resources.limits.memory`\n   - Absolute ceiling. If a container tries to allocate beyond this, the kernel OOMKills it.\n   - No grace period, no warning. Allocation fails → OOM handler invoked.\n   - This is what causes the dreaded `OOMKilled` status.\n\n2. **memory.high** (soft limit) ← Not directly exposed in Kubernetes (yet)\n   - When memory exceeds `memory.high`, the kernel slows allocations by putting the process to sleep.\n   - Acts as a throttle, not a kill.\n   - Allows the process to reclaim memory (GC, cache eviction) before hitting the hard limit.\n   - Some K8s distributions and runtimes support this via annotations.\n\n**Right-sizing implications:**\n\n| Control | K8s mapping | Right-sizing use |\n|---------|------------|------------------|\n| memory.max | limits.memory | Set to Max observed * 1.20-1.30 (safety headroom) |\n| memory.high | (custom annotation) | Set to P95 * 1.10 (throttle before kill) |\n| memory.low | (not exposed) | Memory protection: minimum guaranteed |\n| memory.min | (not exposed) | Hard minimum (won't reclaim below this) |\n\n**Why memory.high matters for right-sizing:**\nWithout memory.high, a container either uses memory freely (below limit) or gets killed (at limit). There's no middle ground. With memory.high:\n- Set limit generous (Max * 1.30)\n- Set high tighter (P95 * 1.20)\n- Container is throttled between high and max, allowing GC to reclaim\n- Fewer OOMKills, more predictable behaviour\n\n**How to check your cluster:** `stat /sys/fs/cgroup/cgroup.controllers` — exists on v2.\nKubelet 1.25+ supports cgroups v2 natively. Older kubelets need `--cgroup-driver=systemd`.\n\n**Recommendation**: On cgroups v2 clusters, set memory limits 10-20% higher than you would on v1, and use memory.high (if available) as the effective constraint. This reduces OOMKills without increasing actual memory usage.",
+        "right-sizing", p))
+
+    pairs.append(make_pair("infra-cgroups-right-sizing-002",
+        "How does CFS CPU bandwidth control work in cgroups v2 and how does it cause invisible throttling?",
+        "## CFS Bandwidth and Invisible CPU Throttling\n\n**Kubernetes CPU limits are enforced via CFS bandwidth control.** When a container exceeds its CPU limit within a CFS period, it's throttled (paused) for the remainder.\n\n**How CFS works:**\n```\ncpu.max = \"<quota> <period>\"\n# Example: 100000 100000 = 1 CPU core (100ms quota per 100ms period)\n# Example: 200000 100000 = 2 CPU cores\n# Example: 50000 100000 = 0.5 CPU core (500m)\n```\n\n**The throttling problem:**\n1. Container gets 100ms of CPU time per 100ms period (for 1 CPU limit)\n2. If container uses 100ms of CPU in the first 20ms of the period (burst)\n3. Container is PAUSED for the remaining 80ms\n4. From the application's perspective: random 80ms latency spikes\n5. From Prometheus: CPU usage shows 100% (used all allocated time) but NO alert fires\n\n**Why it's invisible:**\n- `container_cpu_usage_seconds_total` shows total CPU used, not throttling\n- Application latency increases but CPU metrics look \"normal\"\n- The only indicator: `container_cpu_cfs_throttled_periods_total`\n\n**Detection query:**\n```promql\nrate(container_cpu_cfs_throttled_periods_total[5m])\n/ rate(container_cpu_cfs_periods_total[5m]) > 0.05\n```\nIf >5% of periods are throttled, the container is CPU-constrained.\n\n**Multi-threaded amplification:**\n- A 4-thread application with 2000m (2 core) limit\n- All 4 threads burst simultaneously, consuming 200ms of CPU in 50ms wall time\n- Throttled for 50ms, but during that time ALL 4 threads are paused\n- Perceived latency: 50ms throttle * 4 threads = 200ms of blocked work\n\n**Right-sizing to avoid throttling:**\n1. Set CPU limit = Max observed * 1.25 (never at exactly Max)\n2. For latency-sensitive services: Remove CPU limit entirely (only set request)\n3. Monitor `container_cpu_cfs_throttled_seconds_total` and alert if > 0\n4. If CFS period (default 100ms) is too coarse, consider `--cpu-cfs-quota-period=10ms` (kubelet flag) for finer-grained scheduling\n\n**cgroups v2 improvement**: cpu.max with burst support (`cpu.max.burst`) allows temporary burst above quota. Not yet supported in K8s kubelet but available in newer kernels (5.14+).",
+        "edge-case", p))
+
+    pairs.append(make_pair("infra-cgroups-right-sizing-003",
+        "How does cgroups v2 Pressure Stall Information (PSI) help with right-sizing decisions?",
+        "## PSI for Proactive Right-Sizing\n\n**PSI (Pressure Stall Information) measures time tasks spend waiting for resources.** Available in cgroups v2 (kernel 4.20+).\n\n**Three PSI metrics per resource (CPU, memory, I/O):**\n```\n# /sys/fs/cgroup/<path>/cpu.pressure\nsome avg10=5.00 avg60=3.50 avg300=2.00 total=1234567\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n\n# /sys/fs/cgroup/<path>/memory.pressure\nsome avg10=0.50 avg60=0.30 avg300=0.10 total=56789\nfull avg10=0.10 avg60=0.05 avg300=0.02 total=12345\n```\n\n**Interpretation:**\n- **some**: Percentage of time at least ONE task is stalled (waiting for resource)\n- **full**: Percentage of time ALL tasks are stalled (entire cgroup blocked)\n- **avg10/60/300**: 10-second, 60-second, 5-minute averages\n\n**Right-sizing with PSI:**\n\n| Metric | Value | Action |\n|--------|-------|--------|\n| cpu.pressure some > 10% | Tasks frequently waiting for CPU | Increase CPU request/limit |\n| cpu.pressure full > 1% | All tasks blocked on CPU | Critical: increase CPU immediately |\n| memory.pressure some > 5% | Memory reclaim causing delays | Approaching OOM, increase memory |\n| memory.pressure full > 0.5% | All tasks blocked on memory reclaim | Near OOM, increase memory NOW |\n| io.pressure some > 20% | I/O wait causing delays | Faster disk or reduce I/O |\n\n**Advantages over traditional metrics:**\n1. PSI detects resource contention BEFORE it causes problems\n2. CPU usage at 80% might be fine (no pressure) or terrible (high pressure) — PSI tells you which\n3. Memory at 90% of limit with no pressure = efficient. At 70% with pressure = fragmented, needs more.\n\n**In Kubernetes:**\n- PSI is per-cgroup, so per-container in K8s\n- Not yet exposed via standard K8s metrics API\n- Access via node-exporter with PSI collector enabled\n- Or via custom metrics pipeline reading `/sys/fs/cgroup/.../cpu.pressure`\n\n**Right-sizing workflow with PSI:**\n1. Traditional: container_cpu_usage_seconds / limit > 0.8 → increase CPU (reactive)\n2. With PSI: cpu.pressure some > 5% → increase CPU (proactive, before user impact)\n\nPSI-based right-sizing catches issues that usage-based metrics miss, especially for bursty workloads where average usage is low but contention is high.",
+        "right-sizing", p))
+
+    pairs.append(make_pair("infra-cgroups-right-sizing-004",
+        "How does the OOM scoring mechanism in cgroups v2 affect which pods get killed and how should I set QoS classes?",
+        "## OOM Scoring and QoS for Right-Sizing\n\n**When a node runs out of memory, the kernel's OOM killer selects a victim based on OOM scores.** Kubernetes influences this through QoS classes.\n\n**OOM score calculation:**\n```\noom_score_adj = -997 (Guaranteed) | 2-999 (Burstable) | 1000 (BestEffort)\n```\n- Lower score = less likely to be killed\n- BestEffort pods are always killed first\n- Guaranteed pods are killed last (only if system is truly out of memory)\n\n**QoS classes and their right-sizing implications:**\n\n**Guaranteed** (request = limit for ALL containers):\n- OOM score: -997 (almost never killed)\n- Best for: Databases, stateful services, services where restart = data loss\n- Right-sizing trade-off: Must be precisely sized. Can't burst above limit.\n- Formula: request = limit = P99 * 1.30 (generous, since can't burst)\n\n**Burstable** (request < limit for ANY container):\n- OOM score: Calculated based on request/limit ratio\n- Better right-sizing flexibility: request covers baseline, burst to limit for peaks\n- Formula: request = P95 * 1.20, limit = Max * 1.25\n- Higher oom_score when using more than requested (killed before Guaranteed)\n\n**BestEffort** (no request or limit set):\n- OOM score: 1000 (always killed first)\n- Never use for production workloads\n- Acceptable: Dev/test, batch jobs with retry logic\n\n**Right-sizing strategy by QoS:**\n\n| Workload | QoS | Request | Limit | Why |\n|----------|-----|---------|-------|-----|\n| Database | Guaranteed | P99*1.30 | = request | Cannot afford OOMKill |\n| API service | Burstable | P95*1.20 | Max*1.25 | Handles peak, restarts OK |\n| Background worker | Burstable | P50*1.20 | Max*1.50 | Burst-heavy, restarts OK |\n| Dev tool | BestEffort | none | none | Non-critical |\n\n**Node pressure eviction order:**\n1. BestEffort pods (all of them first)\n2. Burstable pods using more than their request (highest % over request first)\n3. Burstable pods within their request\n4. Guaranteed pods (only if system services need memory)\n\n**Key insight**: Setting memory request close to actual usage (right-sizing) makes Burstable pods LESS likely to be evicted. A pod using 80% of its request is safer than one using 200% of its request.",
+        "edge-case", p))
+
+    pairs.append(make_pair("infra-cgroups-right-sizing-005",
+        "How do cgroups v2 cpu.weight and cpu.max interact for right-sizing pod CPU?",
+        "## cpu.weight vs cpu.max in Right-Sizing\n\n**cgroups v2 has two CPU control mechanisms:**\n\n1. **cpu.weight** (proportional sharing) ← Kubernetes `resources.requests.cpu`\n   - Range: 1-10000 (default 100)\n   - K8s maps: 1m CPU → weight 1, 1000m → weight 1024 (approximately)\n   - Only matters when CPU is contested. If node has spare CPU, all containers can use 100%.\n\n2. **cpu.max** (hard bandwidth limit) ← Kubernetes `resources.limits.cpu`\n   - Absolute ceiling on CPU time per period\n   - Always enforced, even if node has spare CPU\n\n**How they interact:**\n\n| Scenario | Node CPU free? | Request (weight) effect | Limit (max) effect |\n|----------|---------------|------------------------|--------------------|\n| Low load | Yes | Irrelevant (no contention) | Still enforced (throttling) |\n| High load | No | Determines share of CPU | Caps max regardless |\n| Burst | Partially | Gets proportional share | Capped at limit |\n\n**Right-sizing implication:**\n\n**CPU Request (cpu.weight):**\n- Sets the minimum guaranteed share under contention\n- Over-requesting = reserving capacity others can't use (wasteful)\n- Under-requesting = getting less than needed under contention (performance impact)\n- Right-size to: P95 * 1.20 of actual usage\n\n**CPU Limit (cpu.max):**\n- Sets the absolute maximum, even on empty nodes\n- Over-limiting = wasting free CPU. Container can't burst even when node is idle.\n- Under-limiting = CFS throttling (latency spikes)\n- Right-size to: Max * 1.25 (or remove entirely for burstable workloads)\n\n**When to remove CPU limit:**\n- Stateless services where brief CPU bursts are acceptable\n- Services behind HPA (HPA adds replicas instead of vertical scaling)\n- Node is not overcommitted (enough headroom for burst)\n- Caution: Without limit, a runaway process can monopolize CPU, affecting co-located pods\n\n**When to keep CPU limit:**\n- Multi-tenant clusters (prevent noisy neighbours)\n- Guaranteed QoS required (must set limit = request)\n- Cost accounting requires predictable CPU usage\n\n**Best practice for most workloads**: Set CPU request accurately (P95 * 1.20). Set CPU limit generously (Max * 2) or remove it. The request guarantees baseline performance; the limit is insurance against runaway processes, not a right-sizing tool.",
+        "right-sizing", p))
+
+    return pairs
+
+
+# ── Container Runtimes ───────────────────────────────────────────────
+
+
+def container_runtime_pairs() -> list[dict]:
+    """containerd/CRI-O overhead, ephemeral storage."""
+    p = "Container runtime documentation and K8s best practices"
+    pairs = []
+
+    pairs.append(make_pair("infra-runtime-right-sizing-001",
+        "How does the container runtime (containerd vs CRI-O) affect resource overhead and right-sizing?",
+        "## Container Runtime Overhead\n\n**The container runtime adds per-node overhead that reduces capacity available for pods.**\n\n**containerd (most common):**\n- Memory overhead: 50-100Mi per node (containerd daemon + shim processes)\n- CPU overhead: 100-200m per node (image management, container lifecycle)\n- Per-container shim: ~10Mi memory, ~10m CPU per running container\n- With 50 containers per node: ~500Mi + 500m overhead\n\n**CRI-O (common on OpenShift):**\n- Memory overhead: 30-80Mi per node (lighter than containerd)\n- CPU overhead: 50-150m per node\n- Per-container overhead: ~8Mi memory, ~5m CPU (no shim process, conmon is lighter)\n- With 50 containers per node: ~400Mi + 300m overhead\n\n**Comparison for right-sizing:**\n\n| Runtime | 50-container overhead | Impact on allocatable |\n|---------|---------------------|-----------------------|\n| containerd | ~600Mi + 600m | ~4% of 16Gi/16CPU node |\n| CRI-O | ~430Mi + 400m | ~3% of 16Gi/16CPU node |\n| Docker (deprecated) | ~800Mi + 800m | ~5% of 16Gi/16CPU node |\n\n**Right-sizing impact:**\n- kubelet allocatable = node capacity - kube-reserved - system-reserved - runtime overhead\n- Over-estimating runtime overhead = less allocatable = pods don't fit = unnecessary node scaling\n- Under-estimating = pods scheduled but node runs out of resources = eviction\n\n**How to account for runtime overhead:**\n1. Check actual runtime memory: `systemctl status containerd` → RSS from systemd-cgtop\n2. Set `--system-reserved` in kubelet to include runtime overhead\n3. Pod right-sizing should NOT include runtime overhead (it's node-level)\n4. Node right-sizing (instance type selection) must account for it\n\n**Image pull overhead:**\n- Pulling a 500Mi image temporarily uses ~500Mi disk + memory for layer decompression\n- On nodes with many pods starting simultaneously (spot replacement), this can cause memory pressure\n- Mitigation: Pre-pull images via DaemonSet, or use smaller images (Alpine, distroless)",
+        "right-sizing", p))
+
+    pairs.append(make_pair("infra-runtime-right-sizing-002",
+        "How does ephemeral storage usage affect pod right-sizing and what are the limits?",
+        "## Ephemeral Storage Right-Sizing\n\n**Ephemeral storage is the container's writable layer, logs, and emptyDir volumes.** Often overlooked in right-sizing but can cause eviction.\n\n**What counts as ephemeral storage:**\n1. Container writable layer (anything written to the container filesystem)\n2. Logs written to stdout/stderr (stored by kubelet until rotated)\n3. emptyDir volumes (unless backed by tmpfs)\n4. NOT: persistent volumes, configmaps, secrets\n\n**Kubelet eviction thresholds (defaults):**\n```\n--eviction-hard=\"nodefs.available<10%\"\n--eviction-soft=\"nodefs.available<15%\"\n```\nWhen node disk drops below 10%, kubelet evicts pods using the most ephemeral storage.\n\n**Common over-consumers:**\n\n| Source | Typical usage | Mitigation |\n|--------|-------------|------------|\n| Application logs (stdout) | 100Mi-1Gi/day | Reduce log level, structured logging |\n| Temp files (data processing) | 500Mi-10Gi | Use emptyDir with sizeLimit |\n| Container layer writes | 10-100Mi | Use read-only root filesystem |\n| Core dumps | 1-10Gi per crash | Disable or redirect to PV |\n| Package cache (pip, npm) | 200Mi-1Gi | Multi-stage builds, clean cache |\n\n**Right-sizing ephemeral storage:**\n```yaml\nresources:\n  requests:\n    ephemeral-storage: \"1Gi\"    # Expected steady-state disk usage\n  limits:\n    ephemeral-storage: \"5Gi\"    # Max before eviction (must not exceed node capacity)\n```\n\n**When to set ephemeral storage limits:**\n- Data processing pods that write temporary files\n- Pods with known log volume (high-traffic APIs)\n- Build pods (compiler output, Docker layers)\n- Any pod that might write unbounded data to local disk\n\n**When to skip:**\n- Simple API services with minimal logging\n- Read-only workloads\n- Pods using only PVCs for data storage\n\n**Node-level planning:**\n- Total ephemeral capacity = node root disk - OS - kubelet - container images\n- 100Gi root disk - 20Gi system - 30Gi images = 50Gi for pod ephemeral storage\n- If 20 pods request 2Gi each = 40Gi, only 10Gi headroom\n- Right-size ephemeral storage to avoid node disk pressure eviction",
+        "right-sizing", p))
+
+    return pairs
+
+
+# ── Karpenter ────────────────────────────────────────────────────────
+
+
+def karpenter_pairs() -> list[dict]:
+    """Karpenter consolidation, bin packing, spot, node right-sizing."""
+    p = "Karpenter documentation and K8s node management best practices"
+    pairs = []
+
+    pairs.append(make_pair("infra-karpenter-right-sizing-001",
+        "How does Karpenter consolidation interact with pod right-sizing?",
+        "## Karpenter Consolidation and Right-Sizing\n\n**Karpenter consolidation replaces underutilized nodes with smaller ones.** Pod right-sizing directly enables better consolidation.\n\n**How consolidation works:**\n1. Karpenter periodically evaluates each node: can its pods fit on other existing nodes or a smaller node?\n2. If yes → cordon, drain, terminate the node\n3. If pods need a new node → launch smallest instance type that fits\n\n**Pod right-sizing enables consolidation:**\n\nBefore right-sizing:\n```\nNode: m6i.4xlarge (16 CPU, 64Gi)\n  Pod A: 4000m request (using 500m)\n  Pod B: 4000m request (using 300m)\n  Pod C: 4000m request (using 400m)\n  Used: 12,000m / 16,000m = 75% allocated, 7.5% actually used\n  Karpenter: Node looks full, no consolidation possible\n```\n\nAfter right-sizing:\n```\nNode: m6i.4xlarge (16 CPU, 64Gi)\n  Pod A: 600m request (using 500m)\n  Pod B: 360m request (using 300m)\n  Pod C: 480m request (using 400m)\n  Used: 1,440m / 16,000m = 9% allocated\n  Karpenter: All pods fit on m6i.large (2 CPU, 8Gi) → consolidates!\n```\n\n**Consolidation policies:**\n```yaml\nspec:\n  disruption:\n    consolidationPolicy: WhenUnderutilized  # Replace with smaller node\n    # OR\n    consolidationPolicy: WhenEmpty           # Only remove empty nodes\n    consolidateAfter: 30s                    # How long to wait\n```\n\n**Best practice sequence:**\n1. Right-size pods first (k8s-sage)\n2. Enable Karpenter consolidation\n3. Karpenter automatically selects optimal instance types\n4. Monitor: `karpenter_nodes_total`, `karpenter_nodeclaims_disrupted_total`\n\n**Gotchas:**\n- Pods with PVC affinity: Can't move to nodes in different AZs\n- PodDisruptionBudgets: May block consolidation if too restrictive\n- `do-not-disrupt` annotation: Prevents Karpenter from moving a pod\n- Consolidation can cause brief service disruption — ensure PDBs are set\n\n**Metric to track**: `sum(karpenter_pods_state{state=\"pending\"}) > 0` for > 60s means Karpenter can't find instances. Broaden instance type requirements.",
+        "right-sizing", p))
+
+    pairs.append(make_pair("infra-karpenter-right-sizing-002",
+        "How does Karpenter bin-packing compare to Cluster Autoscaler and how does it affect right-sizing?",
+        "## Karpenter vs Cluster Autoscaler for Right-Sizing\n\n**Both scale nodes, but Karpenter makes smarter instance selection based on actual pod requirements.**\n\n**Cluster Autoscaler:**\n- Uses pre-defined node groups (e.g., m6i.xlarge group, m6i.2xlarge group)\n- Scales UP: When pods are pending, adds a node from the matching group\n- Scales DOWN: When a node is underutilized for 10+ minutes\n- Problem: If your node group is m6i.2xlarge but pods only need m6i.large, you always overpay\n- Right-sizing impact: Pod right-sizing improves utilization but doesn't change node type\n\n**Karpenter:**\n- No pre-defined node groups. Selects from ALL allowed instance types per launch.\n- Groups pending pods by requirements, selects cheapest instance that fits\n- Can mix instance types, sizes, architectures, and purchase types\n- Right-sizing impact: Pod right-sizing directly leads to smaller instance selection\n\n**Comparison:**\n\n| Feature | Cluster Autoscaler | Karpenter |\n|---------|-------------------|----------|\n| Instance selection | Fixed per node group | Dynamic per launch |\n| Bin-packing | Within node group constraints | Across all allowed types |\n| Consolidation | Scale down only empty/underutilized | Replace with smaller nodes |\n| Spot handling | Per node group | Per pod, mixed |\n| Multi-arch | Separate node groups | Automatic selection |\n\n**Right-sizing workflow difference:**\n\nWith Cluster Autoscaler:\n1. Right-size pods → nodes underutilized\n2. CA scales down (removes nodes) but can't change node TYPE\n3. Still overpaying per node if group uses large instances\n4. Must manually update node group instance types\n\nWith Karpenter:\n1. Right-size pods → next launch uses smaller instances automatically\n2. Consolidation replaces existing large nodes with smaller ones\n3. Instance type optimization is automatic\n4. No manual intervention needed\n\n**Migration tip**: If switching from CA to Karpenter after right-sizing pods, expect an additional 20-30% cost reduction from better instance selection alone.",
+        "right-sizing", p))
+
+    pairs.append(make_pair("infra-karpenter-right-sizing-003",
+        "How should I configure Karpenter NodePool requirements based on my workload patterns?",
+        "## Karpenter NodePool Configuration for Right-Sizing\n\n**NodePool requirements determine what instances Karpenter can select. Broader requirements = better optimization.**\n\n**Recommended production configuration:**\n```yaml\napiVersion: karpenter.sh/v1beta1\nkind: NodePool\nmetadata:\n  name: default\nspec:\n  template:\n    spec:\n      requirements:\n      - key: kubernetes.io/arch\n        operator: In\n        values: [amd64, arm64]           # Both architectures\n      - key: karpenter.sh/capacity-type\n        operator: In\n        values: [on-demand, spot]         # Both purchase types\n      - key: karpenter.k8s.aws/instance-category\n        operator: In\n        values: [m, c, r]                 # General, compute, memory\n      - key: karpenter.k8s.aws/instance-generation\n        operator: Gte\n        values: [\"6\"]                     # Current gen only\n      - key: karpenter.k8s.aws/instance-size\n        operator: In\n        values: [large, xlarge, 2xlarge, 4xlarge]  # Size range\n  limits:\n    cpu: 1000                              # Max total CPU in pool\n    memory: 4000Gi                         # Max total memory\n  disruption:\n    consolidationPolicy: WhenUnderutilized\n    consolidateAfter: 30s\n```\n\n**Pattern-specific NodePools:**\n\n**Steady workloads (APIs, databases):**\n```yaml\nrequirements:\n- key: karpenter.sh/capacity-type\n  operator: In\n  values: [on-demand]           # No spot for steady/stateful\n- key: karpenter.k8s.aws/instance-category\n  operator: In\n  values: [m, r]                 # Balanced or memory-optimized\n```\n\n**Batch workloads (jobs, CI):**\n```yaml\nrequirements:\n- key: karpenter.sh/capacity-type\n  operator: In\n  values: [spot]                 # Spot only for batch\n- key: karpenter.k8s.aws/instance-category\n  operator: In\n  values: [m, c]                 # Balanced or compute\n```\n\n**How pod right-sizing affects instance selection:**\n\n| Pod requests | Karpenter selects | Cost/hr |\n|-------------|-------------------|---------|\n| 4000m CPU + 8Gi (over-provisioned) | m6i.2xlarge (8 CPU, 32Gi) | $0.384 |\n| 500m CPU + 1Gi (right-sized) | m6i.large (2 CPU, 8Gi) | $0.096 |\n| Savings | 75% smaller instance | 75% cost reduction |\n\nThe more precisely pods are right-sized, the better Karpenter can bin-pack onto optimal instances.",
+        "right-sizing", p))
+
+    return pairs
+
+
+# ── Cluster Autoscaler ───────────────────────────────────────────────
+
+
+def cluster_autoscaler_pairs() -> list[dict]:
+    """Cluster Autoscaler thresholds, pod density, expander strategies."""
+    p = "K8s Cluster Autoscaler documentation and best practices"
+    pairs = []
+
+    pairs.append(make_pair("infra-autoscaler-right-sizing-001",
+        "How does the Cluster Autoscaler scale-down threshold affect right-sizing decisions?",
+        "## Cluster Autoscaler Scale-Down and Right-Sizing\n\n**CA scales down a node when its utilization is below a threshold for a sustained period.**\n\n**Key parameters:**\n```\n--scale-down-utilization-threshold=0.5   # Node utilization below 50%\n--scale-down-unneeded-time=10m           # For 10 minutes\n--scale-down-delay-after-add=10m         # Wait after adding a node\n```\n\n**How utilization is calculated:**\n```\nnode_utilization = sum(pod_requests_on_node) / node_allocatable\n```\nNote: This uses REQUESTS, not actual usage. Right-sizing directly affects this calculation.\n\n**Before right-sizing:**\n```\nNode: 16 CPU allocatable\nPod requests: 12 CPU (actual usage: 3 CPU)\nUtilization: 12/16 = 75% → Above threshold, CA won't scale down\nResult: Paying for 16 CPU, using 3 CPU\n```\n\n**After right-sizing:**\n```\nNode: 16 CPU allocatable\nPod requests: 4 CPU (actual usage: 3 CPU)\nUtilization: 4/16 = 25% → Below threshold, CA scales down!\nResult: CA moves pods to other nodes, removes this node\n```\n\n**Interaction with right-sizing:**\n1. Over-provisioned pods inflate utilization → CA thinks nodes are busy → no scale-down\n2. Right-sizing reduces requests → utilization drops → CA can consolidate\n3. After consolidation, fewer nodes run at higher real utilization\n\n**Tuning for right-sized clusters:**\n- Threshold 0.5 (default): Good after right-sizing. Scales down when <50% requested.\n- Threshold 0.3: More aggressive. Use if pods are well-right-sized and you want tighter packing.\n- Threshold 0.7: Conservative. Use if right-sizing is still in progress.\n\n**Warning**: Setting threshold too low (e.g., 0.2) with poorly-right-sized pods causes flapping: scale down → pods pending → scale up → repeat.\n\n**Best practice**: Right-size pods FIRST. Then tune CA threshold. Typical sequence:\n1. Right-size pods (drop requests to match P95 * 1.20)\n2. Set `scale-down-utilization-threshold=0.5`\n3. Wait 30 minutes for CA to consolidate\n4. Check remaining node count and utilization\n5. If nodes are >70% utilized, right-sizing was effective",
+        "right-sizing", p))
+
+    pairs.append(make_pair("infra-autoscaler-right-sizing-002",
+        "How does pod density per node affect right-sizing and what are the limits?",
+        "## Pod Density and Right-Sizing\n\n**As pods are right-sized (smaller requests), more pods fit per node.** But there are hard limits on pod density.\n\n**Pod count limits:**\n\n| Limit source | Default | Impact |\n|-------------|---------|--------|\n| kubelet --max-pods | 110 | Hard limit per node |\n| AWS ENI (EKS) | Varies by instance | ENI * IPs per ENI |\n| IP addresses (VPC CNI) | ENI-dependent | m6i.large: 29 pods max |\n| GKE max pods per node | 110 (32 for Autopilot) | Configurable |\n| AKS max pods per node | 250 (with Azure CNI) | 30 with kubenet |\n\n**Right-sizing increases pod density:**\n\nBefore right-sizing:\n```\nNode: m6i.2xlarge (8 CPU, 32Gi)\n8 pods * (1000m CPU + 4Gi memory) = 8 CPU + 32Gi → Full\nPod density: 8 pods/node\n```\n\nAfter right-sizing:\n```\nNode: m6i.2xlarge (8 CPU, 32Gi)\nPods now request 200m CPU + 512Mi memory\nMax by resources: 40 pods (CPU) or 64 pods (memory)\nMax by kubelet: 110 pods\nMax by ENI (EKS): 58 IPs\nEffective limit: 40 pods (CPU is bottleneck)\n```\n\n**When pod density becomes a problem:**\n1. **ENI limits on AWS**: Right-sized pods fit by resources but not by IP addresses. Solution: Use prefix delegation (`--enable-prefix-delegation`) to get 256 IPs per ENI.\n2. **Kubelet overhead**: Each pod adds ~10m CPU and 10Mi memory of kubelet overhead (health checks, volume mounts, etc.). 100 pods = 1 CPU + 1Gi kubelet overhead.\n3. **Container runtime**: Each container adds ~10Mi memory for shim/runtime. 100 containers = 1Gi runtime overhead.\n4. **API server load**: More pods = more watch connections, more events. Scales linearly.\n\n**Node sizing after right-sizing:**\n- Small nodes (2 CPU, 8Gi): 10-20 right-sized pods. Simple, quick to replace.\n- Large nodes (32 CPU, 128Gi): 100+ right-sized pods. Better bin-packing but higher blast radius.\n- Medium nodes (8 CPU, 32Gi): Good balance for most clusters.\n\n**Recommendation**: After right-sizing, if you hit pod count limits before resource limits, either:\n1. Use larger instances (more ENIs/IPs)\n2. Enable prefix delegation (EKS)\n3. Use fewer, slightly larger pods (if functionally equivalent)\n4. Switch to overlay networking (Calico, Cilium) which doesn't have ENI limits",
+        "right-sizing", p))
+
+    return pairs
+
+
+# ── Node-Level ───────────────────────────────────────────────────────
+
+
+def node_level_pairs() -> list[dict]:
+    """Allocatable vs capacity, kubelet reserved, kernel memory."""
+    p = "K8s node management documentation and best practices"
+    pairs = []
+
+    pairs.append(make_pair("infra-node-right-sizing-001",
+        "How do I calculate the actual allocatable resources on a K8s node and why does it matter for right-sizing?",
+        "## Node Allocatable Calculation\n\n**Allocatable is what's actually available for pods.** It's always less than node capacity.\n\n**Formula:**\n```\nallocatable = capacity - kube-reserved - system-reserved - eviction-threshold\n```\n\n**Example: m6i.2xlarge (8 CPU, 32Gi):**\n```\nCapacity:        8000m CPU,  32768Mi memory\nkube-reserved:    100m CPU,    256Mi memory   (kubelet, kube-proxy)\nsystem-reserved:  100m CPU,    256Mi memory   (sshd, journald, containerd)\neviction-hard:      0m CPU,    100Mi memory   (memory.available < 100Mi)\n─────────────────────────────────────────────\nAllocatable:     7800m CPU,  32156Mi memory\n```\n\n**In practice, kubelet reserves scale with node size:**\n\n| Node memory | Recommended kube-reserved memory |\n|-------------|--------------------------------|\n| 4Gi | 256Mi (6.25%) |\n| 8Gi | 512Mi (6.25%) |\n| 16Gi | 1Gi (6.25%) |\n| 32Gi | 1.5Gi (4.7%) |\n| 64Gi | 2Gi (3.1%) |\n| 128Gi | 3Gi (2.3%) |\n\n**Why this matters for right-sizing:**\n1. If you sum pod requests and they equal node capacity, pods won't schedule (exceeds allocatable)\n2. Larger nodes lose less to overhead (percentage decreases)\n3. After right-sizing, total pod requests must fit within allocatable, not capacity\n\n**Check actual allocatable:**\n```bash\nkubectl describe node <name> | grep -A5 Allocatable\n```\n\n**System pods that consume from allocatable:**\n- kube-proxy: ~100m CPU, 128Mi memory per node\n- CoreDNS: ~100m CPU, 170Mi per replica (not per node)\n- CNI plugin (Calico/Cilium): 100-300m CPU, 256-512Mi per node\n- Monitoring agent: 100-200m CPU, 256-512Mi per node\n- Total system pod overhead: 300-800m CPU, 500Mi-1.5Gi per node\n\n**Effective capacity for workload pods:**\n```\npod_capacity = allocatable - system_pod_requests\n             = 7800m - 500m = 7300m CPU\n             = 32156Mi - 1Gi = 31132Mi memory\n```\n\n**Right-sizing at node level**: After right-sizing pods, if node utilization (requests/allocatable) is <40%, consider smaller instances. If >85%, consider larger instances or more replicas.",
+        "right-sizing", p))
+
+    pairs.append(make_pair("infra-node-right-sizing-002",
+        "How does kernel memory overhead affect container right-sizing and what should I account for?",
+        "## Kernel Memory Overhead\n\n**The Linux kernel uses memory for per-process bookkeeping** that's charged to the container's cgroup but invisible to the application.\n\n**Per-container kernel memory:**\n\n| Kernel structure | Typical size | Scales with |\n|-----------------|-------------|-------------|\n| Page tables | 10-100Mi | Virtual address space (not RSS) |\n| Slab cache (dentry, inode) | 20-50Mi | Files opened |\n| Socket buffers | 10-200Mi | Network connections |\n| TCP receive/send buffers | 256KB per connection | Active TCP connections |\n| Kernel stack | 16KB per thread | Thread count |\n| cgroup metadata | 5-10Mi | Number of cgroups (containers) |\n\n**When kernel memory becomes significant:**\n\n1. **High-connection services** (10K+ connections):\n   - TCP buffers: 10,000 * 256KB * 2 (send+recv) = 5Gi\n   - This is charged to the container's cgroup memory\n   - Application RSS shows 500Mi but container_memory_rss shows 5.5Gi\n   - Right-sizing must account for connection count\n\n2. **Large address space** (JVM, Go with large heap):\n   - Page tables for 32Gi virtual address space: ~64Mi\n   - Minimal but adds up with many containers per node\n\n3. **File-heavy workloads** (Elasticsearch, Kafka):\n   - Slab cache for file metadata: 50-200Mi\n   - Opening thousands of files (log segments, index files)\n\n**Right-sizing implications:**\n- container_memory_rss includes kernel memory charged to the cgroup\n- container_memory_working_set_bytes = RSS + cache - inactive_file\n- The gap between application heap/RSS and container RSS = kernel overhead\n- Must set container memory limit to cover: application_memory + kernel_overhead\n\n**Formula:**\n```\nmemory_limit = application_max_rss + (connections * 512KB) + page_tables + 200Mi_safety\n```\n\n**For a typical API service (5000 connections, 1Gi app memory):**\n```\nlimit = 1Gi + (5000 * 512KB) + 20Mi + 200Mi = ~3.7Gi\n```\nWithout accounting for kernel overhead, setting limit to 1.5Gi would OOMKill despite app using only 1Gi.\n\n**Monitoring**: Compare `process_resident_memory_bytes` (from app metrics) with `container_memory_rss` (from cAdvisor). The difference is kernel overhead.",
+        "edge-case", p))
+
+    return pairs
+
+
+# ── Main ─────────────────────────────────────────────────────────────
+
+
+def generate_all() -> list[dict]:
+    """Collect all infrastructure pairs."""
+    all_pairs = []
+    all_pairs.extend(cgroups_v2_pairs())
+    all_pairs.extend(container_runtime_pairs())
+    all_pairs.extend(karpenter_pairs())
+    all_pairs.extend(cluster_autoscaler_pairs())
+    all_pairs.extend(node_level_pairs())
+
+    # Validate
+    ids = set()
+    for pair in all_pairs:
+        pid = pair["id"]
+        assert pid not in ids, f"Duplicate ID: {pid}"
+        ids.add(pid)
+        assert len(pair["assistant"]) >= 50, f"{pid}: assistant too short"
+        assert pair["metadata"]["category"] in (
+            "right-sizing", "classification", "runtime-specific", "edge-case"
+        ), f"{pid}: bad category"
+        assert pair["metadata"].get("provenance"), f"{pid}: missing provenance"
+
+    # Write
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(OUTPUT_PATH, "w") as f:
+        for pair in all_pairs:
+            f.write(json.dumps(pair) + "\n")
+
+    print(f"Wrote {len(all_pairs)} infrastructure pairs -> {OUTPUT_PATH}")
+    return all_pairs
+
+
+if __name__ == "__main__":
+    pairs = generate_all()
+    cats = {}
+    for p in pairs:
+        c = p["metadata"]["category"]
+        cats[c] = cats.get(c, 0) + 1
+    print("Pairs by category:")
+    for cat, count in sorted(cats.items()):
+        print(f"  {cat}: {count}")

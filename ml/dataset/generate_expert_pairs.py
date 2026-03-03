@@ -35,7 +35,7 @@ def make_pair(
     meta.update(extra_meta)
     return {
         "id": id_str,
-        "source": "expert",
+        "source": "synthetic",
         "system": SYSTEM_PROMPT,
         "user": user,
         "assistant": assistant,

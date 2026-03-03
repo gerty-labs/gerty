@@ -1,0 +1,128 @@
+You Broke Reddit: The Pi-Day Outage
+
+r/RedditEng - Cute error image friends, we love them.
+Cute error image friends, we love them.
+Been a while since that was our 500 page, hasn’t it? It was cute and fun. We’ve now got our terribly overwhelmed Snoo being crushed by a pile of upvotes. Unfortunately, if you were browsing the site, or at least trying, during the afternoon of March 14th during US hours, you may have seen our unfortunate Snoo during the 314-minute outage Reddit faced (on Pi day no less!) Or maybe you just saw the homepage with no posts. Or an error. One way or another, Reddit was definitely broken. But it wasn’t you, it was us.
+
+Today we’re going to talk about the Pi day outage, but I want to make sure we give our team(s) credit where due. Over the last few years, we’ve put a major emphasis on improving availability. In fact, there’s a great blog post from our CTO talking about our improvements over time. In classic Reddit form, I’ll steal the image and repost it as my own.
+
+r/RedditEng - Reddit daily availability vs current SLO target.
+Reddit daily availability vs current SLO target.
+As you can see, we’ve made some pretty strong progress in improving Reddit’s availability. As we’ve emphasized the improvements, we’ve worked to de-risk changes, but we’re not where we want to be in every area yet, so we know that some changes remain unreasonably risky. Kubernetes version and component upgrades remain a big footgun for us, and indeed, this was a major trigger for our 3/14 outage.
+
+TL;DR
+Upgrades, particularly to our Kubernetes clusters, are risky for us, but we must do them anyway. We test and validate them in advance as best we can, but we still have plenty of work to do.
+
+Upgrading from Kubernetes 1.23 to 1.24 on the particular cluster we were working on bit us in a new and subtle way we’d never seen before. It took us hours to decide that a rollback, a high-risk action on its own, was the best course of action.
+
+Restoring from a backup is scary, and we hate it. The process we have for this is laden with pitfalls and must be improved. Fortunately, it worked!
+
+We didn’t find the extremely subtle cause until hours after we pulled the ripcord and restored from a backup.
+
+Not everything went down. Our modern service API layers all remained up and resilient, but this impacted the most critical legacy node in our dependency graph, so the blast radius still included most user flows; more work remains in our modernization drive.
+
+Never waste a good crisis – we’re resolute in using this outage to change some of the major architectural and process decisions we’ve lived with for a long time and we’re going to make our cluster upgrades safe.
+
+It Begins
+It’s funny in an ironic sort of way. As a team, we had just finished up an internal postmortem for a previous Kubernetes upgrade that had gone poorly; but only mildly, and for an entirely resolved cause. So we were kicking off another upgrade of the same cluster.
+
+We’ve been cleaning house quite a bit this year, trying to get to a more maintainable state internally. Managing Kubernetes (k8s) clusters has been painful in a number of ways. Reddit has been on cloud since 2009, and started adopting k8s relatively early. Along the way, we accumulated a set of bespoke clusters built using the kubeadm tool rather than any standard template. Some of them have even been too large to support under various cloud-managed offerings. That history led to an inconsistent upgrade cadence, and split configuration between clusters. We’d raised a set of pets, not managed a herd of cattle.
+
+The Compute team manages the parts of our infrastructure related to running workloads, and has spent a long time defining and refining our upgrade process to try and improve this. Upgrades are tested against a dedicated set of clusters, then released to the production environments, working from lowest criticality to highest. This upgrade cycle was one of our team’s big-ticket items this quarter, and one of the most important clusters in the company, the one running the Legacy part of our stack (affectionately referred to by the community as Old Reddit), was ready to be upgraded to the next version. The engineer doing the work kicked off the upgrade just after 19:00 UTC, and everything seemed fine, for about 2 minutes. Then? Chaos.
+
+r/RedditEng - Reddit edge traffic, RPS by status. Oh, that’s... not ideal. 
+Reddit edge traffic, RPS by status. Oh, that’s... not ideal.
+All at once the site came to a screeching halt. We opened an incident immediately, and brought all hands on deck, trying to figure out what had happened. Hands were on deck and in the call by T+3 minutes. The first thing we realized was that the affected cluster had completely lost all metrics (the above graph shows stats at our CDN edge, which is intentionally separated). We were flying blind. The only thing sticking out was that DNS wasn’t working. We couldn’t resolve records for entries in Consul (a service we run for cross-environment dynamic DNS), or for in-cluster DNS entries. But, weirdly, it was resolving requests for public DNS records just fine. We tugged on this thread for a bit, trying to find what was wrong, to no avail. This was a problem we had never seen before, in previous upgrades anywhere else in our fleet, or our tests performing upgrades in non-production environments.
+
+For a deployment failure, immediately reverting is always “Plan A”, and we definitely considered this right off. But, dear Redditor… Kubernetes has no supported downgrade procedure. Because a number of schema and data migrations are performed automatically by Kubernetes during an upgrade, there’s no reverse path defined. Downgrades thus require a restore from a backup and state reload!
+
+We are sufficiently paranoid, so of course our upgrade procedure includes taking a backup as standard. However, this backup procedure, and the restore, were written several years ago. While the restore had been tested repeatedly and extensively in our pilot clusters, it hadn’t been kept fully up to date with changes in our environment, and we’d never had to use it against a production cluster, let alone this cluster. This meant, of course, that we were scared of it – We didn’t know precisely how long it would take to perform, but initial estimates were on the order of hours… of guaranteed downtime. The decision was made to continue investigating and attempt to fix forward.
+
+It’s Definitely Not A Feature, It’s A Bug
+About 30 minutes in, we still hadn’t found clear leads. More people had joined the incident call. Roughly a half-dozen of us from various on-call rotations worked hands-on, trying to find the problem, while dozens of others observed and gave feedback. Another 30 minutes went by. We had some promising leads, but not a definite solution by this point, so it was time for contingency planning… we picked a subset of the Compute team to fork off to another call and prepare all the steps to restore from backup.
+
+In parallel, several of us combed logs. We tried restarts of components, thinking perhaps some of them had gotten stuck in an infinite loop or a leaked connection from a pool that wasn’t recovering on its own. A few things were noticed:
+
+Pods were taking an extremely long time to start and stop.
+
+Container images were also taking a very long time to pull (on the order of minutes for <100MB images over a multi-gigabit connection).
+
+Control plane logs were flowing heavily, but not with any truly obvious errors.
+
+At some point, we noticed that our container network interface, Calico, wasn’t working properly. Pods for it weren’t healthy. Calico has three main components that matter in our environment:
+
+calico-kube-controllers: Responsible for taking action based on cluster state to do things like assigning IP pools out to nodes for use by pods.
+
+calico-typha: An aggregating, caching proxy that sits between other parts of Calico and the cluster control plane, to reduce load on the Kubernetes API.
+
+calico-node: The guts of networking. An agent that runs on each node in the cluster, used to dynamically generate and register network interfaces for each pod on that node.
+
+The first thing we saw was that the calico-kube-controllers pod was stuck in a ContainerCreating status. As a part of upgrading the control plane of the cluster, we also have to upgrade the container runtime to a supported version. In our environment, we use CRI-O as our container runtime and recently we’d identified a low severity bug when upgrading CRI-O on a given host, where one-or-more containers exited, and then randomly and at low rate got stuck starting back up. The quick fix for this is to just delete the pod, and it gets recreated and we move on. No such luck, not the problem here.
+
+r/RedditEng - This fixes everything, I swear!
+This fixes everything, I swear!
+Next, we decided to restart calico-typha. This was one of the spots that got interesting. We deleted the pods, and waited for them to restart… and they didn’t. The new pods didn’t get created immediately. We waited a couple minutes, no new pods. In the interest of trying to get things unstuck, we issued a rolling restart of the control plane components. No change. We also tried the classic option: We turned the whole control plane off, all of it, and turned it back on again. We didn’t have a lot of hope that this would turn things around, and it didn’t.
+
+At this point, someone spotted that we were getting a lot of timeouts in the API server logs for write operations. But not specifically on the writes themselves. Rather, it was timeouts calling the admission controllers on the cluster. Reddit utilizes several different admission controller webhooks. On this cluster in particular, the only admission controller we use that’s generalized to watch all resources is Open Policy Agent (OPA). Since it was down anyway, we took this opportunity to delete its webhook configurations. The timeouts disappeared instantly… But the cluster didn’t recover.
+
+Let ‘Er Rip (Conquering Our Fear of Backup Restores)
+We were running low on constructive ideas, and the outage had gone on for over two hours at this point. It was time to make the hard call; we would make the restore from backup. Knowing that most of the worker nodes we had running would be invalidated by the restore anyway, we started terminating all of them, so we wouldn’t have to deal with the long reconciliation after the control plane was back up. As our largest cluster, this was unfortunately time-consuming as well, taking about 20 minutes for all the API calls to go through.
+
+Once that was finished, we took on the restore procedure, which nobody involved had ever performed before, let alone on our favorite single point of failure. Distilled down, the procedure looked like this:
+
+Terminate two control plane nodes.
+
+Downgrade the components of the remaining one.
+
+Restore the data to the remaining node.
+
+Launch new control plane nodes and join them to sync.
+
+Immediately, we noticed a few issues. This procedure had been written against a now end-of-life Kubernetes version, and it pre-dated our switch to CRI-O, which means all of the instructions were written with Docker in mind. This made for several confounding variables where command syntax had changed, arguments were no longer valid, and the procedure had to be rewritten live to accommodate. We used the procedure as much we could; at one point to our detriment, as you’ll see in a moment.
+
+In our environment, we don’t treat all our control plane nodes as equal. We number them, and the first one is generally considered somewhat special. Practically speaking it’s the same, but we use it as the baseline for procedures. Also, critically, we don’t set the hostname of these nodes to reflect their membership in the control plane, instead leaving them as the default on AWS of something similar to `ip-10-1-0-42.ec2.internal`. The restore procedure specified that we should terminate all control plane nodes except the first, restore the backup to it, bring it up as a single-node control plane, and then bring up new nodes to replace the others that had been terminated. Which we did.
+
+The restore for the first node was completed successfully, and we were back in business. Within moments, nodes began coming online as the cluster autoscaler sprung back to life. This was a great sign because it indicated that networking was working again. However, we weren’t ready for that quite yet and shut off the autoscaler to buy ourselves time to get things back to a known state. This is a large cluster, so with only a single control plane node, it would very likely fail under load. So, we wanted to get the other two back online before really starting to scale back up. We brought up the next two and ran into our next sticking point: AWS capacity was exhausted for our control plane instance type. This further delayed our response, as canceling a ‘terraform apply` can have strange knock-on effects with state and we didn’t want to run the risk of making things even worse. Eventually, the nodes launched, and we began trying to join them.
+
+The next hitch: The new nodes wouldn’t join. Every single time, they’d get stuck, with no error, due to being unable to connect to etcd on the first node. Again, several engineers split off into a separate call to look at why the connection was failing, and the remaining group planned how to slowly and gracefully bring workloads back online from a cold start. The breakout group only took a few minutes to discover the problem. Our restore procedure was extremely prescriptive about the order of operations and targets for the restore… but the backup procedure wasn’t. Our backup was written to be executed on any control plane node, but the restore had to be performed on the same one. And it wasn’t. This meant that the TLS certificates being presented by the working node weren’t valid for anything else to talk to it, because of the hostname mismatch. With a bit of fumbling due to a lack of documentation, we were able to generate new certificates that worked. New members joined successfully. We had a working, high-availability control plane again.
+
+In the meantime, the main group of responders started bringing traffic back online. This was the longest down period we’d seen in a long time… so we started extremely conservatively, at about 1%. Reddit relies on a lot of caches to operate semi-efficiently, so there are several points where a ‘thundering herd’ problem can develop when traffic is scaled immediately back to 100%, but downstream services aren’t prepared for it, and then suffer issues due to the sudden influx of load.
+
+This tends to be exacerbated in outage scenarios, because services that are idle tend to scale down to save resources. We’ve got some tooling that helps deal with that problem which will be presented in another blog entry, but the point is that we didn’t want to turn on the firehose and wash everything out. From 1%, we took small increments: 5%, 10%, 20%, 35%, 55%, 80%, 100%. The site was (mostly) live, again. Some particularly touchy legacy services had been stopped manually to ensure they wouldn’t misbehave when traffic returned, and we carefully turned those back on.
+
+Success! The outage was over.
+
+But we still didn’t know why it happened in the first place.
+
+A little self-reflection; or, a needle in a 3.9 Billion Log Line Haystack
+Further investigation kicked off. We started looking at everything we could think of to try and narrow down the exact moment of failure, hoping there’d be a hint in the last moments of the metrics before they broke. There wasn’t. For once though, a historical decision worked in our favor… our logging agent was unaffected. Our metrics are entirely k8s native, but our logs are very low-level. So we had the logs preserved and were able to dig into them.
+
+We started by trying to find the exact moment of the failure. The API server logs for the control plane exploded at 19:04:49 UTC. Log volume just for the API server increased by 5x at that instant. But the only hint in them was one we’d already seen, our timeouts calling OPA. The next point we checked was the OPA logs for the exact time of the failure. About 5 seconds before the API server started spamming, the OPA logs stopped entirely. Dead end. Or was it?
+
+Calico had started failing at some point. Pivoting to its logs for the timeframe, we found the next hint.
+
+r/RedditEng - All Reddit metrics and incident activities are managed in UTC for consistency in comms. Log timestamps here are in US/Central due to our logging system being overly helpful. 
+All Reddit metrics and incident activities are managed in UTC for consistency in comms. Log timestamps here are in US/Central due to our logging system being overly helpful.
+Two seconds before the chaos broke loose, the calico-node daemon across the cluster began dropping routes to the first control plane node we upgraded. That’s normal and expected behavior, due to it going offline for the upgrade. What wasn’t expected was that all routes for all nodes began dropping as well. And that’s when it clicked.
+
+The way Calico works, by default, is that every node in your cluster is directly peered with every other node in a mesh. This is great in small clusters because it reduces the complexity of management considerably. However, in larger clusters, it becomes burdensome; the cost of maintaining all those connections with every node propagating routes to every other node scales… poorly. Enter route reflectors. The idea with route reflectors is that you designate a small number of nodes that peer with everything and the rest only peer with the reflectors. This allows for far fewer connections and lower CPU and network overhead. These are great on paper, and allow you to scale to much larger node counts (>100 is where they’re recommended, we add zero(s)). However, Calico’s configuration for them is done in a somewhat obtuse way that’s hard to track. That’s where we get to the cause of our issue.
+
+The route reflectors were set up several years ago by the precursor to the current Compute team. Time passed, and with attrition and growth, everyone who knew they existed moved on to other roles or other companies. Only our largest and most legacy clusters still use them. So there was nobody with the knowledge to interact with the route reflector configuration to even realize there could be something wrong with it or to be able to speak up and investigate the issue. Further, Calico’s configuration doesn’t actually work in a way that can be easily managed via code. Part of the route reflector configuration requires fetching down Calico-specific data that’s expected to only be managed by their CLI interface (not the standard Kubernetes API), hand-edited, and uploaded back. To make this acceptable means writing custom tooling to do so. Unfortunately, we hadn’t. The route reflector configuration was thus committed nowhere, leaving us with no record of it, and no breadcrumbs for engineers to follow. One engineer happened to remember that this was a feature we utilized, and did the research during this postmortem process, discovering that this was what actually affected us and how.
+
+Get to the Point, Spock, If You Have One
+How did it actually break? That’s one of the most unexpected things of all. In doing the research, we discovered that the way that the route reflectors were configured was to set the control plane nodes as the reflectors, and everything else to use them. Fairly straightforward, and logical to do in an autoscaled cluster where the control plane nodes are the only consistently available ones. However, the way this was configured had an insidious flaw. Take a look below and see if you can spot it. I’ll give you a hint: The upgrade we were performing was to Kubernetes 1.24.
+
+r/RedditEng - A horrifying representation of a Kubernetes object in YAML
+A horrifying representation of a Kubernetes object in YAML
+The nodeSelector and peerSelector for the route reflectors target the label `node-role.kubernetes.io/master`. In the 1.20 series, Kubernetes changed its terminology from “master” to “control-plane.” And in 1.24, they removed references to “master,” even from running clusters. This is the cause of our outage. Kubernetes node labels.
+
+But wait, that’s not all. Really, that’s the proximate cause. The actual cause is more systemic, and a big part of what we’ve been unwinding for years: Inconsistency.
+
+Nearly every critical Kubernetes cluster at Reddit is bespoke in one way or another. Whether it’s unique components that only run on that cluster, unique workloads, only running in a single availability zone as a development cluster, or any number of other things. This is a natural consequence of organic growth, and one which has caused more outages than we can easily track over time. A big part of the Compute team’s charter has specifically been to unwind these choices and make our environment more homogeneous, and we’re actually getting there.
+
+In the last two years, A great deal of work has been put in to unwind that organic pattern and drive infrastructure built with intent and sustainability in mind. More components are being standardized and shared between environments, instead of bespoke configurations everywhere. More pre-production clusters exist that we can test confidently with, instead of just a YOLO to production. We’re working on tooling to manage the lifecycle of whole clusters to make them all look as close to the same as possible and be re-creatable or replicable as needed. We’re moving in the direction of only using unique things when we absolutely must, and trying to find ways to make those the new standards when it makes sense to. Especially, we’re codifying everything that we can, both to ensure consistent application and to have a clear historical record of the choices that we’ve made to get where we are. Where we can’t codify, we’re documenting in detail, and (most importantly) evaluating how we can replace those exceptions with better alternatives. It’s a long road, and a difficult one, but it’s one we’re consciously choosing to go down, so we can provide a better experience for our engineers and our users.
+
+Final Curtain
+If you’ve made it this far, we’d like to take the time to thank you for your interest in what we do. Without all of you in the community, Reddit wouldn’t be what it is. You truly are the reason we continue to passionately build this site, even with the ups and downs (fewer downs over time, with our focus on reliability!)
+
+Finally, if you found this post interesting, and you’d like to be a part of the team, the Compute team is hiring, and we’d love to hear from you if you think you’d be a fit. If you apply, mention that you read this postmortem. It’ll give us some great insight into how you think, just to discuss it. We can’t continue to improve without great people and new perspectives, and you could be the next person to provide them!

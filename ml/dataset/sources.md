@@ -13,7 +13,16 @@ This document tracks the provenance and licensing of all training data sources.
 | VPA recommender source | Apache 2.0 | Yes | Manual extraction | Not started |
 | Goldilocks source | Apache 2.0 | Yes | Manual extraction | Not started |
 | Expert knowledge | Original (proprietary) | N/A | Hand-written | 20 seed pairs |
-| Synthetic generation | Original (proprietary) | N/A | `generate_synthetic.py` | Not started |
+| Synthetic generation | Original (proprietary) | N/A | `generate_synthetic.py` | 4,500 pairs |
+| Synthetic (expert-style) | Original (proprietary) | N/A | `generate_expert_pairs.py` | 191 pairs |
+| Synthetic (K8s docs-style) | Original (proprietary) | N/A | `generate_k8s_docs_pairs.py` | 300 pairs |
+| Synthetic (VPA-style) | Original (proprietary) | N/A | `generate_vpa_pairs.py` | 69 pairs |
+| Synthetic (runtime memory) | Original (proprietary) | N/A | `generate_runtime_memory_pairs.py` | 36 pairs |
+| Synthetic (cloud providers) | Original (proprietary) | N/A | `generate_cloud_provider_pairs.py` | 18 pairs |
+| Synthetic (Helm defaults) | Original (proprietary) | N/A | `generate_helm_defaults_pairs.py` | 20 pairs |
+| Synthetic (infra/container) | Original (proprietary) | N/A | `generate_infra_pairs.py` | 14 pairs |
+| Synthetic (postmortem) | Original (proprietary) | N/A | `generate_postmortem_pairs.py` | 12 pairs |
+| Synthetic (VPA expansion) | Original (proprietary) | N/A | `generate_vpa_expansion_pairs.py` | 12 pairs |
 
 ## Licensing Notes
 

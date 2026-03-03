@@ -1,0 +1,252 @@
+omplete Guide to EKS Cost Optimization at Enterprise Scale
+Ilan Adler
+Ilan Adler
+10 min read  February 19th, 2026
+Kubernetes
+In this article
+Rightsizing Your EKS Workloads
+
+Why Your Cluster Autoscaler Scales Up Fast and Never Scales Down
+
+EKS vs EC2: What Your AWS Bill Isn’t Showing You
+
+Spot Instances and Fargate Cost Optimization
+
+Storage and Network Cost Controls
+
+Monitoring and Continuous Optimization
+
+What Happens When You Optimize Without Context
+
+Building a Cost Optimization Strategy
+
+Need Help Optimizing Your EKS Costs?
+
+Are your EKS clusters costing more than they should? Most of the overspend probably comes from the same handful of issues we see across enterprises migrating to Kubernetes.
+
+The good news is that EKS cost optimization eliminates the waste that accumulates when you scale without visibility.
+
+Rightsizing Your EKS Workloads
+The single biggest contributor to EKS cluster cost bloat is workloads running with resource requests that bear no relationship to actual usage.
+
+When your deployment YAML asks for 2 CPU cores and 4GB of RAM because someone copy-pasted it from Stack Overflow eighteen months ago, you’re paying for capacity that sits idle while your cluster autoscaler dutifully provisions more nodes to accommodate these fictional requirements.
+
+Stop Paying for Capacity Your Pods Don’t Actually Need
+Resource requests in Kubernetes determine how the scheduler places pods and how much capacity gets reserved.
+
+If your pods request more than they need, you’re forcing the cluster to scale out prematurely. If they request too little, you’ll see throttling and OOMKills that create a different kind of chaos, usually at 3 AM.
+
+Most teams set requests once during initial deployment and never revisit them. Your application’s resource needs change as features ship and traffic patterns evolve. What started as a reasonable guess becomes increasingly wrong over time.
+
+Examine actual resource consumption over a 7-14 day window. Tools like Kubernetes Metrics Server give you CPU and memory usage data, but you need to correlate that with business context. 
+
+Are you looking at peak traffic or a quiet Tuesday afternoon? Set requests at the 90th percentile of observed usage, not the maximum spike you saw that one time during a load test. Leave limits either unset or significantly higher than requests to allow bursting without getting throttled.
+
+Finding the Right Instance Types
+EKS cluster cost optimization extends beyond pod-level resource tuning to the instance types running your worker nodes.
+
+Since worker nodes represent the largest cost component in most EKS deployments, selecting the right instance families and pricing models can dramatically impact your bill. Savings Plans alone can provide up to 72% cost reductions compared to on-demand rates.
+
+Many teams default to general-purpose instance types like m5.xlarge or m6i.2xlarge because they’re safe and familiar. The problem is that you’re paying for balanced compute and memory ratios when your actual workloads might be heavily skewed toward one or the other.
+
+Look at your cluster-wide resource utilization patterns. If you’re consistently showing 80% memory utilization but only 40% CPU utilization, you’re wasting money on CPU cores you’ll never use.
+
+Switching to memory-optimized instances in r5 family can reduce EKS cluster cost by 15-30% for memory-heavy workloads like data processing pipelines or caching layers.
+
+Memory Optimized instances, such as the R5 series, are engineered for applications that demand high throughput and low latency, especially in analytics and real-time data processing scenarios. They are particularly beneficial for workloads like high-performance databases or in-memory data stores.
+
+Source: AWS Memory-Optimized Documentation
+
+The same logic applies in reverse for CPU-intensive workloads. If you’re running compute-heavy tasks like encoding, rendering, or model training, c5 or c6i instances deliver better price-performance than general-purpose alternatives.
+
+Graviton-based instances like m7g, c7g, and r7g families offer 20-40% better price-performance than x86 equivalents for most workloads. The catch is that your container images need arm64 builds, which means checking that your dependencies and base images support it.
+
+For new deployments or applications you control end-to-end, this is usually straightforward. For legacy applications with opaque dependencies, it might not be worth the archaeology.
+
+Why Your Cluster Autoscaler Scales Up Fast and Never Scales Down
+Kubernetes cluster autoscaling promises automatic rightsizing of your infrastructure based on actual demand. In practice, it often becomes another YAML offering to the gods, configured once, mostly forgotten, occasionally blamed when things go sideways.
+
+Parameter	Default Value	Cost-Optimized Value	Impact on Cost	Impact on Availability
+scale-down-delay-after-add	10 minutes	2-5 minutes	High savings – removes idle nodes faster	Low risk – workloads already scheduled
+scale-down-unneeded-time	10 minutes	3-5 minutes	Medium savings – identifies idle nodes faster	Low risk – still has buffer time
+scale-down-utilization-threshold	0.5 (50%)	0.6-0.7 (60-70%)	Medium-High savings – removes underutilized nodes	Medium risk – tighter packing
+scan-interval	10 seconds	10-30 seconds	Low savings – reduces API calls	Negligible
+max-empty-bulk-delete	10 nodes	10-20 nodes	Medium savings – faster bulk removal	Low risk – only empty nodes
+max-graceful-termination-sec	600 seconds (10 min)	300-600 seconds	Low savings – faster pod eviction	Medium risk – less time for graceful shutdown
+skip-nodes-with-local-storage	true	false (with caution)	High savings – removes more nodes	High risk – data loss possible
+max-nodes-total	No limit	Set based on budget	Prevents runaway costs	Can limit scale during spikes
+Kubernetes Cluster Autoscaler: Default vs. Cost-Optimized Configuration
+Cluster Autoscaler Configuration
+The default Cluster Autoscaler configuration is optimized for safety, not cost. It scales up aggressively, which is good for availability, but scales down conservatively, which is bad for your AWS bill.
+
+The scale-down delay defaults to 10 minutes, meaning nodes sit idle for at least that long before they’re considered for termination.
+
+Tune your scale-down parameters based on how quickly your workloads can tolerate pod rescheduling.
+
+For stateless services that can move between nodes, reduce scale-down delays to 2-3 minutes. For stateful workloads or applications with long startup times, you’ll need longer delays to avoid thrashing.
+
+Set appropriate priority classes for your workloads so the autoscaler knows which pods can be evicted during scale-down and which ones are non-negotiable.
+
+Without priority classes, the autoscaler treats everything equally, which means it might refuse to scale down because a single daemonset pod is running on a node.
+
+The other common issue are the node groups with incompatible instance types. If your node group mixes m5.large and m5.4xlarge instances, the autoscaler has to make suboptimal decisions because it can’t pack pods efficiently.
+
+Keep node groups homogeneous or, at minimum, ensure instance types within a group have similar resource ratios.
+
+Karpenter as an Alternative
+Cluster Autoscaler works, but it’s not particularly smart about instance selection. Karpenter takes a different approach. Instead of managing fixed node groups, it provisions exactly the right instance type and size for pending pods.
+
+This matters for cost optimization on EKS because Karpenter can select from hundreds of instance type combinations to find the cheapest option that satisfies pod requirements.
+
+If you have a pod requesting 1.5 CPU and 3GB RAM, Karpenter might provision a t3.medium, whereas Cluster Autoscaler would scale up whatever node group it’s configured to use.
+
+Karpenter also handles consolidation automatically. It continuously looks for opportunities to repack pods onto fewer instances and terminates unneeded nodes. This eliminates the manual toil of monitoring utilization and adjusting node group sizes.
+
+The tradeoff is that Karpenter introduces more node churn than Cluster Autoscaler. For workloads with long initialization times or expensive startup processes like loading large datasets or establishing connection pools, this churn can offset the cost savings.
+
+Run both approaches in parallel during evaluation to understand the actual impact on your specific workloads.
+
+EKS vs EC2: What Your AWS Bill Isn’t Showing You
+One question that surfaces during any EKS cost optimization workshop: would we be better off running containers directly on EC2 without the orchestration overhead?
+
+Control Plane Costs
+EKS charges $0.10 per hour per cluster for the managed control plane, which is roughly $73 per month per cluster.
+
+If you’re running dozens of small clusters like separate environments, teams, or regions, these control plane costs add up quickly. For a large enterprise with 50 clusters, you’re looking at $3,650 monthly just for control planes before you’ve launched a single worker node.
+
+Consolidating clusters reduces this overhead but creates other problems like blast radius increases, multi-tenancy becoming harder, and RBAC configurations turning into archaeological artifacts that nobody wants to touch.
+
+The right balance depends on your organization’s risk tolerance and operational maturity. Compare EKS cluster cost against the operational overhead of managing control planes yourself.
+
+If you’re running on self-managed Kubernetes like kops or kubeadm, you’re paying for master node instances and spending engineering time on upgrades, etcd backups, and certificate rotation.
+
+For most organizations, the EKS control plane fee is cheaper than the people cost of DIY cluster management.
+
+When EC2 Makes More Sense
+Running containers on plain EC2 makes sense in specific scenarios like single-service deployments that don’t need orchestration complexity, extremely cost-sensitive batch processing that can tolerate instance interruptions, or regulatory requirements that prohibit shared control planes.
+
+For everything else, the operational leverage from Kubernetes justifies the cost. You’re paying for declarative configuration, automated scheduling, self-healing, and a control plane that doesn’t wake anyone up at 2 AM because systemd units failed to start.
+
+The real EKS vs EC2 cost comparison should include the hidden costs like time spent manually managing deployments, responding to instance failures, and building custom automation that Kubernetes provides out of the box.
+
+If you’re spending two engineer-weeks per quarter on deployment automation that Kubernetes handles natively, the salary cost dwarfs the EKS control plane fee.
+
+Spot Instances and Fargate Cost Optimization
+AWS Spot instances offer 60-90% discounts on compute compared to on-demand pricing. They can be interrupted with two minutes notice when AWS needs capacity back.
+
+Running Stateless Workloads on Spot
+For stateless workloads that can tolerate interruptions like API services behind load balancers, background job processors, or non-critical batch processing, Spot instances deliver massive EKS cost savings with minimal operational overhead.
+
+Don’t run all your Spot capacity on a single instance type. Spread across multiple instance families and sizes to reduce the likelihood of simultaneous interruptions.
+
+Configure multiple Spot pools in your node groups so the autoscaler can provision whichever instance type has available capacity.
+
+Set up proper pod disruption budgets and graceful shutdown handlers so your applications drain connections cleanly during the two-minute interruption window. Most modern frameworks support this natively, so you just need to wire it up.
+
+Monitor Spot interruption rates in your AWS Cost and Usage Reports. If you’re seeing frequent interruptions in specific regions or availability zones, adjust your instance type selection or shift capacity to more stable pools.
+
+EKS Fargate Cost Optimization
+Fargate eliminates node management entirely by running workloadspods on serverless compute. You pay only for the vCPU and memory your pods actually request, with no idle capacity to optimize away.
+
+This sounds great until you look at the numbers: Fargate costs roughly 30-40% more per vCPU-hour than equivalent EC2 instances. For consistent workloads that run 24/7, this premium adds up quickly.
+
+EKS Fargate cost optimization makes sense for bursty workloads with unpredictable traffic patterns, CI/CD job runners that need isolation, or development environments where simplicity trumps cost efficiency.
+
+For production services with stable traffic, traditional node groups with Spot instances usually deliver better economics.
+
+If you’re using Fargate, rightsize your pod resource requests aggressively. Fargate rounds up to specific CPU and memory combinations, so a pod requesting 1.1 vCPU gets billed for 2 vCPU.
+
+Tune your requests to hit Fargate’s pricing tiers exactly to avoid paying for capacity you’re not using.
+
+Storage and Network Cost Controls
+Compute gets all the attention in cost optimization for EKS, but storage and network charges can quietly consume 20-30% of your total AWS bill.
+
+EBS Volume Optimization
+Every EKS worker node comes with a root volume, typically 20-100GB of gp3 storage. If you’re running 200 nodes, that’s 4-20TB of EBS capacity you’re paying for monthly even if it’s mostly empty.
+
+Right-size root volumes based on actual usage. Most nodes don’t need more than 30-50GB unless you’re running workloads with large container image layers or extensive local caching.
+
+Monitor disk usage across your fleet and adjust AMI configurations to provision smaller volumes for new nodes.
+
+For persistent volumes, switch from gp2 to gp3. gp3 offers better baseline performance at 20% lower cost and lets you provision IOPS and throughput independently.
+
+Audit existing PVCs for volumes that were sized generously during initial deployment and never revisited.
+
+Implement lifecycle policies for snapshots. Many teams take regular snapshots for disaster recovery but never clean up old snapshots. Set up automated deletion for snapshots older than 30-90 days unless they’re tagged for long-term retention.
+
+Data Transfer Costs
+Data transfer charges in AWS follow Byzantine rules that punish the unwary. Data moving between availability zones costs $0.01-0.02 per GB, and data leaving AWS to the internet costs $0.09+ per GB.
+
+In EKS clusters spanning multiple AZs, pod-to-pod communication across zones generates continuous transfer charges. For most workloads, this cost is marginal, but for data-intensive applications like streaming, database replication, or large file transfers, it accumulates.
+
+Use topology-aware routing to prefer same-zone communication when possible. Kubernetes topology spreading and affinity rules let you colocate pods that communicate frequently, reducing cross-AZ traffic.
+
+For egress to the internet, consider CloudFront or AWS Transit Gateway if you’re moving significant data volumes. CloudFront offers lower per-GB pricing for cached content, and Transit Gateway can reduce costs for complex multi-VPC architectures.
+
+Monitoring and Continuous Optimization
+Cost optimization is an ongoing process. Without continuous monitoring, the savings you achieve today will erode as teams deploy new workloads with untuned resource requests.
+
+Setting Up Cost Visibility
+Start with AWS Cost Explorer and enable cost allocation tags for your EKS clusters. Tag everything: clusters, node groups, load balancers, volumes.
+
+Without granular tagging, you’re flying blind. You can see total AWS spend but not which team, application, or environment is driving costs.
+
+Set up daily cost and usage reports and export them to S3 for analysis. These reports provide line-item detail that Cost Explorer doesn’t expose, including Spot instance usage, Savings Plan utilization, and per-resource charges.
+
+Build dashboards that show cost trends over time, broken down by cluster, namespace, and workload. The goal is to make the cost visible to the teams generating it.
+
+When developers can see that their resource-hungry cron job costs $500/month to run, they’re more likely to optimize it.
+
+Establishing Optimization Workflows
+Create a regular cadence for reviewing resource utilization and adjusting configurations. Monthly is usually sufficient. Weekly is overkill unless you’re rapidly scaling or in the middle of a major cost reduction initiative.
+
+Focus on the highest-impact opportunities first: underutilized nodes, idle resources, and workloads with grossly oversized resource requests. A single forgotten dev cluster or abandoned test environment can cost thousands monthly.
+
+Automate the tedious parts: scripts that identify idle resources, alerts when cluster costs exceed expected thresholds, and recommendations for instance type changes based on actual utilization patterns.
+
+The goal is to reduce the toil of optimization, so it happens continuously rather than in desperate quarterly cost-cutting exercises.
+
+What Happens When You Optimize Without Context
+Some cost optimization attempts backfire spectacularly.
+
+Setting resource limits too aggressively leads to pod throttling and performance degradation. Customers start complaining, teams revert the changes, and now you’re back where you started but with reduced trust in optimization initiatives.
+
+Over-relying on Spot instances for critical workloads creates availability problems. When Spot capacity gets interrupted during peak traffic, your cluster can’t scale to meet demand, and you’re debugging an outage instead of optimizing costs.
+
+Consolidating too many workloads into too few clusters increases blast radius. A single misconfigured deployment or runaway resource consumer can impact dozens of applications. The cost savings aren’t worth the operational risk.
+
+Another common mistake is optimizing for cost at the expense of developer velocity.
+
+If your resource quotas are so restrictive that teams can’t deploy without filing tickets and waiting for approval, you’re creating bottlenecks that slow down the business. The salary cost of waiting developers often exceeds the cloud savings.
+
+Building a Cost Optimization Strategy
+Amazon EKS cost optimization requires a systematic approach, not random tuning. Establish a baseline: what are you spending today, and where is that spend going? Break it down by compute, storage, network, and control plane costs.
+
+Define optimization goals that align with business objectives. Reducing overall AWS spend by 20% sounds good but means nothing without context. Better goals are to reduce EKS cost per request by 15%, eliminate idle resources, or maintain costs flat while doubling traffic.
+
+Prioritize based on impact and effort. Rightsizing a few high-traffic services delivers more savings than optimizing dozens of low-traffic workloads.
+
+Similarly, switching to Spot instances is high-impact and low-effort compared to re-architecting applications for better resource efficiency.
+
+Build optimization into your development workflows. Include resource recommendations in deployment templates, set up guardrails that prevent egregiously wasteful configurations, and create dashboards that make cost visible during development rather than discovering problems in production.
+
+Most importantly, treat cost optimization as a continuous practice, not a project. Assign ownership to specific teams or individuals who monitor trends, identify opportunities, and drive improvements on an ongoing basis.
+
+Need Help Optimizing Your EKS Costs?
+If you’re running EKS at scale, you’ve probably noticed that cost optimization quickly becomes a full-time job. Between rightsizing workloads, tuning autoscaling, managing Spot instances, and tracking down idle resources, your platform team spends more time fighting infrastructure costs than building features.
+
+Komodor’s autonomous AI SRE platform gives you comprehensive visibility into what’s actually running in your clusters and why. We automatically surface optimization opportunities like undersized nodes, oversized resource requests, idle workloads, and provide the context you need to act on them without creating new problems. Our platform handles the continuous monitoring and analysis so your team can focus on strategic improvements rather than manually auditing utilization metrics every month.
+
+Reach out to our team to see how we can help reduce your EKS cluster costs while eliminating the operational toil of manual optimization.
+
+Get Started
+Komodor is an Autonomous AI SRE Platform for cloud-native infrastructure. Powered by Klaudia™ Agentic AI, Komodor helps teams visualize, troubleshoot, and optimize Kubernetes environments at scale.
+
+FAQs About EKS Cost Optimization
+
+
+
+
+
+
+

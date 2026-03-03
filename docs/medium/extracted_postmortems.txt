@@ -1,0 +1,658 @@
+## Extracted Postmortem Data — k8s.af / kubernetes-failure-stories
+## Source: WebFetch extraction 2026-03-03
+## Purpose: Training data for k8s-sage dataset expansion
+
+---
+
+### 1. Blue Matador — Node OOM (Fluentd)
+Source: https://www.bluematador.com/blog/post-mortem-kubernetes-node-oom
+Value: HIGH (resource numbers, OOM mechanics)
+
+Timeline: June 15-16, 2019
+- 5:12 PM: First SystemOOM event
+- 6:02 PM next day: Second SystemOOM on different node
+
+Resource Config (fix):
+- Requests: 128Mi memory, 100m CPU
+- Limits: 1024Mi memory, 250m CPU
+- Node memory utilization: ~60-70% after recovery
+- EBS Burst Balance lag: 10-15 minutes from CloudWatch
+
+Root Cause: Fluentd-Sumologic pods had NO resource limits configured.
+Fix: Added resource limits + env RUBY_GC_HEAP_OLDOBJECT_LIMIT_FACTOR=0.9
+Key Lesson: K8s terminated memory-consuming pods while preserving production.
+
+Training pairs: ~5
+- No resource limits → SystemOOM (why limits matter)
+- Fluentd/log shipper memory patterns
+- Monitoring lag (CloudWatch 10-15min) masking resource exhaustion
+- Right-sizing log shippers (128Mi/100m → 1024Mi/250m)
+- EBS Burst Balance as leading indicator
+
+---
+
+### 2. erickhun (Buffer) — CPU Limits + Throttling
+Source: https://erickhun.com/posts/kubernetes-faster-services-no-cpu-limits/
+Value: HIGH (CPU throttling mechanics)
+
+Scale: 60 nodes, ~1500 containers on AWS
+
+Resource Config:
+- API service CPU limit: 800m (0.8 core)
+- Actual peak usage: 200m (0.2 core) — 75% wasted
+- Landing page peak: 242m
+
+CFS Details:
+- Default CFS quota period: 100ms
+
+Performance After Removing CPU Limits:
+- Landing page: 22x faster
+- "Really great latency improvements across all services"
+
+Recommendation: Set CPU requests at observed peak + 20% margin. NO CPU limits.
+
+Kernel Fix Timeline:
+- Debian Buster: Aug 2020
+- Ubuntu Focal 20.04: June 2020
+- EKS: Dec 2019
+- kops 1.18+: June 2020
+- GKE: Jan 2020
+
+Training pairs: ~6
+- CPU limit 800m but actual usage 200m (4x overprovisioned)
+- CFS throttling mechanics (100ms period)
+- 22x latency improvement from removing limits
+- CPU request sizing methodology (peak + 20%)
+- Kernel CFS bug timeline
+- 1500 containers / 60 nodes resource planning
+
+---
+
+### 3. deploy.live — Conntrack Exhaustion (GKE)
+Source: https://deploy.live/blog/kubernetes-networking-problems-due-to-the-conntrack/
+Value: HIGH (conntrack + resource interaction)
+
+Scale:
+- Baseline: 10,000+ RPS
+- Peak: 4x baseline (40,000+ RPS)
+- Downstream services: 100+ instances each
+
+Conntrack Config:
+- Default limit: 65k entries
+- Formula: CONNTRACK_MAX = RAMSIZE(bytes) / 16384 / (x/32) where x=pointer bits
+- GKE: ~5 conntrack_max entries per MB of RAM
+- Target: 262,144 conntrack_max
+
+Alert Threshold: >75% conntrack utilization
+
+Root Cause: Node RAM halved + doubled downstream connections = conntrack exhaustion
+Fix: Higher-RAM nodes + pod density limits; K8s 1.15+ upstream fix (PR #74840)
+Monitoring: (node_nf_conntrack_entries / node_nf_conntrack_entries_limit) * 100
+
+Training pairs: ~5
+- Conntrack limit vs node RAM relationship
+- 75% conntrack utilization alert threshold
+- RAM reduction → conntrack reduction → packet loss
+- Monitoring query for conntrack saturation
+- K8s 1.15 conntrack fix
+
+---
+
+### 4. deploy.live — GKE IP Exhaustion
+Source: https://deploy.live/blog/when-gke-ran-out-of-ip-addresses/
+Value: HIGH (IP planning, autoscaler failure)
+
+IP Allocation:
+- Secondary range: /16 subnet = 65,536 IPs
+- IPs pre-allocated per node: 256
+- Max pods per node (default): 110
+- Theoretical node capacity: 256 nodes (65536 / 256)
+
+Scheduling Failure Breakdown (from one event):
+- 0/256 nodes available
+- 173 nodes: insufficient memory
+- 87 nodes: insufficient CPU
+- 214 nodes: selector mismatch
+- 1 node: unschedulable
+
+Autoscaler: 36 minutes of repeated failures
+Normal deploy time: minutes; stuck deploy: ~1 hour
+
+Fix: Reduced max pods per node → 30% IP consumption reduction + node size increases
+
+Training pairs: ~5
+- IP pre-allocation (256 per node for 110 max pods)
+- IP exhaustion prevents autoscaler scale-up
+- Scheduling failure breakdown analysis
+- /16 CIDR planning for GKE clusters
+- max-pods-per-node tuning for IP conservation
+
+---
+
+### 5. deploy.live — GKE Cluster Upgrade Shipwreck
+Source: https://deploy.live/blog/the-shipwreck-of-gke-cluster-upgrade/
+Value: HIGH (upgrade + HPA + resource interaction)
+
+Versions: 1.10.X → 1.12.X (target 1.12.5-gke.10)
+Test NodePools: 7 nodes each (2 upgraded successfully)
+Problematic cluster: 14 nodes → stuck at 1 of 20 nodes (5%)
+Zombie nodes: 6 nodes not running pods, not terminating
+
+PDB Config: maxUnavailable: 3
+Drain time: 5min baseline, some exceeded 15min
+terminationGracePeriod: default 30s, problematic apps 5-10min (up to 600s)
+
+HPA Issue: Metrics collection failed post-upgrade → scale-up to 100 pods (vs normal 10)
+Alert thresholds: 70% and 100% capacity; dual replicaset detection (30/60 min)
+
+Key Issues:
+- emptyDir volumes without safe-to-evict annotation blocked drain
+- Ingress bug for names 44-47 characters
+- HPA lost CPU metrics → uncontrolled scale-up
+
+Training pairs: ~6
+- PDB maxUnavailable sizing for upgrades
+- terminationGracePeriod vs drain time interaction
+- emptyDir safe-to-evict annotation requirement
+- HPA failure mode: metrics loss → max replicas
+- Zombie node detection and cleanup
+- Post-upgrade metrics pipeline verification
+
+---
+
+### 6. srvaroa — KIAM Latency (10x increase)
+Source: https://varoa.net/kubernetes/migration/latency/dns/java/aws/microservices/2019/10/22/kubernetes-added-a-0-to-my-latency.html
+Value: HIGH (latency + credential overhead)
+
+Latency:
+- EC2: ~20ms response time
+- Kubernetes: 100-200ms (10x higher)
+- Post-fix: lower than EC2
+
+DNS Resolution (K8s container):
+- Range: 21-43ms per query
+
+KIAM Config:
+- Credential expiration: 15 minutes (default)
+- AWS SDK EXPIRATION_THRESHOLD: 15 minutes (hardcoded)
+- AWS SDK REFRESH_THRESHOLD: 60 minutes (hardcoded)
+
+tcpdump Analysis:
+- TCP handshake: 1ms
+- HTTP request: ~1ms
+- Elasticsearch response: 18ms
+- AWS metadata service overhead: 86ms (the hidden cost)
+
+JVM Config: networkaddress.cache.ttl = 10 seconds
+
+Root Cause: KIAM 15-min expiry + AWS SDK 15-min threshold = every request triggers metadata call (86ms overhead)
+
+Training pairs: ~5
+- KIAM credential refresh pathology
+- AWS metadata service latency (86ms)
+- DNS resolution overhead in K8s (21-43ms)
+- JVM DNS caching configuration
+- Credential management resource overhead
+
+---
+
+### 7. philpearl — Ingress Endpoint Race
+Source: https://philpearl.github.io/post/k8s_ingress/
+Value: MEDIUM (conceptual, no hard numbers)
+
+Key Finding: Endpoint removal and SIGTERM happen simultaneously, not sequentially.
+Recommendation: Pods should ignore SIGTERM and continue serving until grace period expires.
+Config: terminationGracePeriod must exceed load balancer reprogram time.
+Pattern: preStop lifecycle hook that sleeps for grace period; return Connection: close header.
+
+Training pairs: ~2
+- Ingress endpoint race condition during pod termination
+- preStop hook pattern for graceful shutdown
+
+---
+
+### 8. NRE Labs (oswalt.dev) — etcd Liveness Probe
+Source: https://oswalt.dev/2018/12/december-4-nre-labs-outage-post-mortem/
+Value: HIGH (liveness probe misconfiguration)
+
+Cluster: v1.12.1, single-master kubeadm, 3 masters + 5 workers (GCP)
+
+etcd Liveness Probe:
+- Command: etcdctl --endpoints=https://[127.0.0.1]:2379 get foo
+- failureThreshold: 8
+- timeoutSeconds: 15
+- initialDelaySeconds: 15
+- Critical calculation: 8 × 15s = 120-second restart cycle
+
+Restart Metrics:
+- etcd: 183 restarts
+- API server: 183 restarts
+- Controller-manager: 91 restarts
+- Uptime per cycle: 1.5-2 minutes before SIGTERM
+
+Worker version mismatch: one worker at v1.11.3 while others at v1.12.1
+
+Fix: Removed entire liveness probe section from etcd manifest.
+
+Training pairs: ~4
+- Liveness probe failure threshold calculation (8 × 15s = 120s)
+- etcd restart cascade (183 restarts)
+- Liveness probe anti-patterns
+- Master component restart cascade
+
+---
+
+### 9. tibobeijen — ElastAlert OOM (AWS)
+Source: https://www.tibobeijen.nl/2019/02/01/learning-from-kubernetes-cluster-failure/
+Value: HIGH (missing limits + cascade)
+
+Cluster: v1.10.6, 8 nodes (3 masters + 5 workers), AWS eu-west-1
+Masters: 43 days old; workers: 2-4 hours old
+
+OOM Events: 4 SystemOOM events in 36-minute window
+Affected: 2 nodes entered NotReady
+
+Root Cause: ElastAlert pods — Helm chart supports resource limits but doesn't set defaults.
+Data volume: "Millions of requests/hour" through CloudFront
+Memory behavior: unbounded growth ("lines going up into nowhere")
+Missing: use_count_query and max_query_size parameters
+
+Cascade of Failures:
+1. No resource limits on ElastAlert
+2. No LimitRange for namespace
+3. No CPU/memory/disk alerts
+4. In-cluster Grafana/Prometheus unreachable during stress
+5. Isolated deployment without team awareness
+6. No post-deployment smoke tests
+
+Fixes:
+- Resource limits on ALL Helm deployments
+- Namespace-level LimitRange defaults
+- Monitoring infrastructure OUTSIDE cluster
+- GitOps deployment approach
+- Segregate ops tools to dedicated node group
+
+Training pairs: ~6
+- Helm chart without default resource limits → OOM
+- ElastAlert memory unbounded growth pattern
+- LimitRange as namespace safety net
+- Monitoring inside cluster becomes unreachable during outage
+- Ops workloads on dedicated node groups
+- 4 SystemOOM events in 36 minutes cascade
+
+---
+
+### 10. Grafana — Pod Priority Cascade
+Source: https://grafana.com/blog/2019/07/24/how-a-production-outage-was-caused-using-kubernetes-pod-priorities/
+Value: HIGH (priority eviction cascade)
+
+Resource Config:
+- Ingester pod: 4 cores CPU + 15GB RAM per pod (25% of single machine)
+- Cluster had unused aggregate resources but no 25% contiguous space
+
+Priority Classes: Critical > High > Medium > Low
+- Critical: monitoring (Prometheus, Alertmanager, node-exporter, kube-state-metrics)
+- High: Ingesters
+- Medium: default (unspecified pods, stateless microservices)
+
+Cascade Mechanism:
+1. New cluster's medium-priority Ingesters preempted production untagged Ingesters
+2. ReplicaSet created replacement with default (medium) priority
+3. Replacement preempted another production Ingester
+4. Self-perpetuating cascade preempted ALL Ingester pods
+
+Data: Ingesters hold up to 12h uncompressed data; no data lost (flushed in time)
+
+Timeline:
+- July 18: Priority classes deployed
+- July 19: New cluster without priority designations triggered cascade
+- ~4 min: Error alerts
+- ~5 min: Diagnosis + scaling
+- ~5 min: Ingesters flushed data
+- ~10 min: Reverse proxy OOM resolved
+- Total outage: 26 minutes
+
+Training pairs: ~5
+- Pod priority cascade mechanism
+- Ingester: 4 CPU + 15GB = 25% of node (fragmentation risk)
+- Default priority class danger
+- Priority class deployment across clusters
+- 26-minute recovery with proper flushing
+
+---
+
+### 11. Datadog — Cilium + systemd Incident (Multi-region)
+Source: https://www.datadoghq.com/blog/2023-03-08-multiregion-infrastructure-connectivity-issue/
+Value: HIGH (scale, multi-region cascade)
+
+Scale: Tens of thousands of nodes went offline in 1 hour
+Responders: 450-750 incident responders across 4 shifts
+Status updates: ~200 across 4 regions
+Regions: US1, EU1, US3, US4, US5
+
+Root Cause: Ubuntu 22.04 systemd v249 security patch at 06:00 UTC caused systemd-networkd to delete Cilium-managed routes.
+
+Timeline:
+- 06:00 UTC: Security update triggered
+- 06:03: Incident began
+- 09:13: Initial recovery (web)
+- 16:44 Mar 8: First major service operational
+- 08:58 Mar 9: All services operational
+- 06:25 Mar 10: Fully resolved with backfill
+
+Total Duration: ~48 hours to full resolution
+
+Training pairs: ~4
+- OS-level updates destroying CNI routes
+- Multi-region synchronized failure (same update window)
+- Scale: tens of thousands of nodes
+- Recovery time: 48h for full resolution
+
+---
+
+### 12. Zalando — Kubelet QPS
+Source: https://raw.githubusercontent.com/zalando-incubator/kubernetes-on-aws/dev/docs/postmortems/jun-2019-kubelet-qps.md
+Value: HIGH (kubelet tuning)
+
+Date: June 11, 2019; Duration: ~1 hour
+
+Root Cause Chain:
+1. Cluster rescaled to single node
+2. Rapid pod creation/deletion overwhelmed kubelet
+3. Default kubelet QPS: 5 requests/second (too low)
+4. kube2iam needed pod IPs, kubelet delayed status updates by minutes
+5. Builder pods couldn't get AWS IAM credentials
+
+Fix: Kubelet QPS: 5 → 50 (10x increase, PR #2247)
+Immediate: manual cluster scale-up
+
+Training pairs: ~3
+- Default kubelet QPS (5) insufficient for pod churn
+- kube2iam dependency on pod IP availability
+- Kubelet QPS tuning (5 → 50)
+
+---
+
+### 13. Zalando — DNS Outage (CoreDNS OOM)
+Source: https://raw.githubusercontent.com/zalando-incubator/kubernetes-on-aws/dev/docs/postmortems/jan-2019-dns-outage.md
+Value: HIGH (DNS + memory limits)
+
+Date: January 7, 2019; Duration: >1 hour
+Impact: All web product + outfit pages (Zalando Fashion Store)
+
+CoreDNS Memory:
+- Initial limit: 100Mi
+- Updated limit: 2000Mi (20x increase)
+
+Cascade:
+1. Aggregation layer spike → DNS query spike
+2. CoreDNS memory exhaustion → OOM kill
+3. Total cluster DNS failure → all hostname resolution failed
+
+Contributing Factors:
+- Node.js: NO DNS caching by default
+- ndots:5 problem: 10 DNS queries per external name lookup
+- HTTP client: short connection lifetime → frequent reconnection → more DNS
+- No VPA on CoreDNS
+- Monitoring needed external service → unavailable during DNS outage
+
+Training pairs: ~5
+- CoreDNS 100Mi → 2000Mi (20x underprovisioned)
+- ndots:5 amplification (10 DNS queries per lookup)
+- Node.js zero DNS caching
+- VPA for CoreDNS (or lack thereof)
+- Monitoring dependency on DNS creates blind spot
+
+---
+
+### 14. AWS Kinesis — Thread Exhaustion
+Source: https://aws.amazon.com/message/11201/
+Value: MEDIUM (scaling cascade, applicable to K8s fleet concepts)
+
+Timeline: ~20 hours (5:15 AM alarm → 10:23 PM recovery)
+Root Cause: Fleet capacity addition → OS thread limit exceeded → cache construction failure
+Thread model: each server maintains threads proportional to total fleet size
+Fix: Larger CPU/memory servers (fewer fleet members), increased OS thread limits, monitoring
+
+Training pairs: ~2
+- Fleet scaling → resource limit exhaustion (OS threads)
+- Thread-per-connection scaling anti-pattern
+
+---
+
+### 15. Slack Jan 2021 — Transit Gateway Saturation
+Source: https://slack.engineering/slacks-outage-on-january-4th-2021/
+Value: HIGH (autoscaling cascade)
+
+Normal message success: >99.999%
+Outage success: 99% at 6:57am PST
+Scale-up attempt: 1,200 servers between 7:01-7:15am
+
+Cascade Mechanism:
+1. AWS Transit Gateway saturated → packet loss
+2. Higher latency → lower CPU → autoscaler DOWNSCALED (wrong direction!)
+3. Then thread utilization spiked → aggressive upscale
+4. 1,200 simultaneous provisions overwhelmed provision-service
+5. Provision-service hit Linux open files limit + AWS quota limit
+6. Unprovisionable instances exceeded ASG size limits
+7. Monitoring dashboards in separate VPC, dependent on degraded TGW
+8. Engineers lost SSH when instances deprovisioned
+
+Recovery: Load balancer "panic mode" (balance across all instances when many failing health checks)
+
+Training pairs: ~5
+- Autoscaler misreading low CPU during saturation
+- Provision-service resource limits (file descriptors)
+- Monitoring in separate VPC dependency
+- Transit Gateway as single point of failure
+- Panic mode recovery pattern
+
+---
+
+### 16. Slack Feb 2022 — Consul + Cache Cascade
+Source: https://slack.engineering/slacks-incident-on-2-22-22/
+Value: MEDIUM (cache + service discovery interaction)
+
+Root Cause: Consul agent 25% rollout → memcached node churn → cache miss → DB overload → timeout → can't refill cache → metastable failure
+
+Infrastructure:
+- Memcached fronted by Mcrouter (consistent hashing)
+- Mcrib control plane generates Mcrouter configs from Consul catalog
+- Vitess (horizontal MySQL) with user-sharded keyspace
+- "Scatter query" hitting every shard for membership data
+
+Cascade: Lower cache hit → higher DB load → timeouts → can't fill cache → loop
+Client retries worsened the cascade.
+
+Fix: Restrictive boot rate limits + query optimization (read replicas)
+
+Training pairs: ~3
+- Cache churn → metastable failure loop
+- Service discovery (Consul) interaction with caching
+- Scatter query anti-pattern
+
+---
+
+### 17. Discord — Thundering Herd OOM
+Source: https://discordstatus.com/incidents/dj3l6lw926kl
+Value: MEDIUM (OOM from thundering herd)
+
+Duration: ~5 hours 16 minutes
+Root Cause: Presence server CPU soft lockups (40 × 20-30s lockups) → split brain → thundering herd
+
+OOM: "Millions of processes" reconnecting simultaneously → session nodes "ran out of available memory and crashed" from event queue buildup. ~1/3 of all sessions stalled.
+
+Fix: Hard connection limits sessions→presence, fast-fail mechanism, split-brain bug fix
+
+Training pairs: ~3
+- Thundering herd → OOM cascade
+- Connection limits as circuit breaker
+- CPU soft lockups → split brain → cascade
+
+---
+
+### 18. Buildkite — Database Downgrade Cascade
+Source: https://buildkite.com/blog/outage-post-mortem-for-august-22nd
+Value: MEDIUM (cost-cutting → cascade)
+
+Database Downgrade:
+- Before: m4.10xlarge Multi-AZ RDS PostgreSQL
+- After: r3.2xlarge Multi-AZ RDS PostgreSQL (cost reduction)
+- "Didn't have as much memory as the old one"
+
+Duration: ~6 hours (17:21-23:10 UTC)
+
+Cascade:
+1. DB CPU maxed at peak US hours
+2. Health check queried DB → HTTP 500
+3. LB removed servers → new servers couldn't determine code version (endpoint was down)
+4. New servers had old AMI referencing decommissioned DB shard
+5. Autoscaling death spiral → EC2 request limit breach
+
+Fix: Upgraded DB, per-host pgbouncer, version detection via S3, health checks without DB dependency
+
+Training pairs: ~3
+- Database downgrade for cost saving → cascade
+- Health check DB dependency anti-pattern
+- Autoscaling death spiral mechanism
+
+---
+
+### 19. AWS EBS — Memory Leak Agent
+Source: https://aws.amazon.com/message/680342/
+Value: MEDIUM (memory leak + DNS propagation)
+
+Root Cause: Collection agent memory leak triggered by failed DNS propagation for replacement server. Agent kept retrying in a way that slowly consumed memory.
+
+Timeline:
+- 10:00 AM: degraded performance
+- 11:00 AM: large number of volumes stuck
+- 3:10 PM: root cause identified, memory freed
+- 4:15 PM: nearly all volumes restored
+
+Fix: Memory leak monitoring per-process, resource limits on low-priority processes, DNS propagation fixes
+
+Training pairs: ~2
+- Agent memory leak from failed DNS → correlated server exhaustion
+- Per-process memory limits for sidecar/agent processes
+
+---
+
+### 20. AWS US-EAST-1 — Scaling Overwhelmed Network
+Source: https://aws.amazon.com/message/12721/
+Value: MEDIUM (scaling cascade)
+
+Root Cause: Automated scaling triggered surge in connections → overwhelmed networking devices between internal and main AWS networks → retry storm
+
+Timeline: 7:30 AM PST trigger → 6:40 PM PST full recovery (~11 hours)
+Impact: EC2, RDS, EMR, EKS, Fargate, ECS, Route53, ELB, CloudWatch, API Gateway
+
+Fix: Disabled triggering scaling, fixed client backoff behavior, network device protection
+
+Training pairs: ~2
+- Scaling event → network device saturation → retry storm
+- Client backoff behavior importance
+
+---
+
+### 21. Spark on K8s (Azure) — OOM from tmpfs
+Source: https://dev.to/pranavbhasker/postmortem-eliminating-oom-failures-in-spark-on-kubernetes-azure-after-cloud-migration-5fia
+Value: MEDIUM (tmpfs + anti-affinity)
+
+Node RAM: 64GB; Shuffle partitions: spark.sql.shuffle.partitions=200
+Root Cause: emptyDir.medium: Memory (tmpfs) + missing pod anti-affinity → all executors on one node
+
+Fix:
+- Anti-affinity: preferredDuringSchedulingIgnoredDuringExecution weight:100, topologyKey: kubernetes.io/hostname
+- Storage: emptyDir.medium: Memory → emptyDir: {} (disk-backed)
+
+Result: 6 months stable, zero OOM incidents
+
+Training pairs: ~3
+- tmpfs emptyDir eats from container memory limit
+- Pod anti-affinity for Spark executors
+- emptyDir Memory vs disk-backed tradeoff
+
+---
+
+### 22. Robusta — Stop Using CPU Limits
+Source: https://home.robusta.dev/blog/stop-using-cpu-limits
+Value: LOW (conceptual, no hard numbers)
+
+Key recommendation: Do NOT use CPU limits. Always use memory limits. Memory request = memory limit.
+
+Training pairs: ~1
+- CPU limits vs requests policy recommendation
+
+---
+
+### 23. Dex/etcd — CRD bloat
+Source: https://pieterlange.github.io/failure-stories/2019-06.dex.html
+Value: MEDIUM (etcd bloat)
+
+etcd data: 0.5GB of accumulated AuthRequest objects
+Master CPU: 60% utilization during reconciliation loops
+Monitoring unavailable (depended on Dex authentication)
+
+Root Cause: Bad Dex defaults, insane TTL on auth requests, reconciliation loop cascade
+
+Fix: Force namespace removal via direct etcd manipulation, redeploy with corrected defaults
+
+Training pairs: ~2
+- CRD/object accumulation → etcd bloat (0.5GB)
+- Authentication dependency creates monitoring blind spot
+
+---
+
+### 24. CNCF — Fluentd to Fluent Bit
+Source: https://www.cncf.io/blog/2025/10/01/fluentd-to-fluent-bit-a-migration-guide/
+Value: LOW (limited hard numbers)
+
+Throughput: 10-40x greater with Fluent Bit vs Fluentd for same resources
+Scale: 100+ TB/day with Lua processing
+Deployments: 15 billion globally
+
+Training pairs: ~1
+- Fluent Bit 10-40x more efficient than Fluentd
+
+---
+
+### 25. yashmehrotra — EKS CNI SNAT
+Source: https://yashmehrotra.com/posts/the-case-of-the-missing-packet-an-eks-migration-tale/
+Value: MEDIUM (VPC CNI config)
+
+Investigation duration: ~1.5 months
+Root Cause: AWS VPC CNI performing SNAT at node level via internet gateway for cross-VPC traffic → packet retransmissions
+
+Fix: AWS_VPC_K8S_CNI_EXTERNALSNAT=true (delegate SNAT to NAT gateway)
+
+Training pairs: ~2
+- AWS VPC CNI SNAT configuration
+- Cross-VPC pod communication troubleshooting
+
+---
+
+## DEAD/UNAVAILABLE URLs (updated 2026-03-03)
+
+| URL | Issue |
+|-----|-------|
+| blog.jetstack.io/blog/gke-webhook-outage | Redirects to CyberArk marketing page (Venafi acquired) |
+| engineering.prezi.com/...kubernetes-crime-story... | SSL certificate error |
+| itnext.io/...menace-elb... | SSL certificate error |
+| status.pagerduty.com/incidents/vbp7ht2647l8 | Returns config page, not incident report |
+| status.heroku.com/incidents/2451 | Returns empty page header |
+| allegro.tech/2018/08/postmortem-why-allegro-went-down.html | Returns Next.js redirect shell only |
+| adammargherio.com/a-perfect-dns-storm/ | Returns blog index, not article |
+
+---
+
+## SUMMARY
+
+Total URLs attempted: ~30
+Successfully extracted: 25
+Dead/unavailable: 7
+Total training pairs estimated: ~95-110
+
+HIGH value (5-8 pairs each): 13 articles
+MEDIUM value (2-3 pairs each): 9 articles
+LOW value (1 pair each): 3 articles

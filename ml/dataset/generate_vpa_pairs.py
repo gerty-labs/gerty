@@ -36,7 +36,7 @@ def make_pair(
     meta.update(extra_meta)
     return {
         "id": id_str,
-        "source": "vpa-source",
+        "source": "synthetic",
         "system": SYSTEM_PROMPT,
         "user": user,
         "assistant": assistant,
