@@ -1,0 +1,14 @@
+apiVersion: v2
+name: gerty
+description: Kubernetes resource efficiency platform — lightweight agents with deterministic right-sizing recommendations
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - kubernetes
+  - efficiency
+  - right-sizing
+  - cost-optimization
+  - resource-management
+maintainers:
+  - name: Gregory Carroll

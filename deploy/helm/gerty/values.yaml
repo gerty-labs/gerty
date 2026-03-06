@@ -1,0 +1,95 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  registry: ghcr.io/gerty-labs
+  tag: ""  # defaults to Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+agent:
+  image:
+    repository: gerty-agent
+    digest: ""  # overridden by marketplace (e.g., sha256:abc...)
+  resources:
+    requests:
+      cpu: 50m
+      memory: 50Mi
+    limits:
+      cpu: 100m
+      memory: 100Mi
+  scrapeInterval: "30s"
+  pushInterval: "5m"
+  nodeSelector: {}
+  tolerations: []
+
+server:
+  image:
+    repository: gerty-server
+    digest: ""  # overridden by marketplace (e.g., sha256:abc...)
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  service:
+    type: ClusterIP
+    port: 8080
+  nodeSelector: {}
+  tolerations: []
+
+slm:
+  enabled: false
+  image:
+    repository: ghcr.io/ggerganov/llama.cpp
+    tag: server
+    digest: ""  # overridden by marketplace (e.g., sha256:abc...)
+  modelSize: "4b"  # "4b" or "9b"
+  model:
+    path: /models/gerty.gguf
+    repository: gerty-model
+    tag: ""  # defaults to Chart.AppVersion
+    digest: ""
+  args:
+    - "--ctx-size"
+    - "1024"
+    - "--threads"
+    - "2"
+    - "--port"
+    - "8080"
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2.5Gi
+    limits:
+      cpu: "2"
+      memory: 3Gi
+  persistence:
+    enabled: false
+    size: 5Gi
+    storageClass: ""
+
+gcpMarketplace:
+  enabled: false
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+grafana:
+  dashboards:
+    enabled: false
+
+networkPolicy:
+  enabled: true
+  allowExternalIngress: true
+
+slack:
+  enabled: false
+  webhookURL: ""
+  channel: "#gerty"
+  digestInterval: "1h"
+  minSeverity: "optimisation"

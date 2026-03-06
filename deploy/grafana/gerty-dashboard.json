@@ -1,0 +1,531 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_INFINITY",
+      "label": "Infinity",
+      "description": "Infinity datasource for REST API queries",
+      "type": "datasource",
+      "pluginId": "yesoreyeram-infinity-datasource"
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "description": "gerty resource efficiency dashboard — cluster waste, namespace breakdown, workload recommendations",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Cluster Overview",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "id": 2,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Node Count",
+      "type": "stat",
+      "targets": [
+        {
+          "columns": [],
+          "filters": [],
+          "format": 1,
+          "global_query_id": "",
+          "refId": "A",
+          "root_selector": "data",
+          "source": "url",
+          "type": "json",
+          "url": "${sage_url}/api/v1/report",
+          "url_options": { "method": "GET" },
+          "json_options": { "root_is_not_array": true, "columnar": false },
+          "parser": "backend",
+          "computed_columns": [],
+          "filterExpression": "",
+          "summarizeExpression": "",
+          "summarizeBy": "",
+          "expression": "nodeCount"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "id": 3,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Pod Count",
+      "type": "stat",
+      "targets": [
+        {
+          "columns": [],
+          "filters": [],
+          "format": 1,
+          "global_query_id": "",
+          "refId": "A",
+          "root_selector": "data",
+          "source": "url",
+          "type": "json",
+          "url": "${sage_url}/api/v1/report",
+          "url_options": { "method": "GET" },
+          "json_options": { "root_is_not_array": true, "columnar": false },
+          "parser": "backend",
+          "computed_columns": [],
+          "filterExpression": "",
+          "summarizeExpression": "",
+          "summarizeBy": "",
+          "expression": "podCount"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "orange", "value": null },
+              { "color": "red", "value": 5000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Total CPU Waste (millicores)",
+      "type": "stat",
+      "targets": [
+        {
+          "columns": [],
+          "filters": [],
+          "format": 1,
+          "global_query_id": "",
+          "refId": "A",
+          "root_selector": "data",
+          "source": "url",
+          "type": "json",
+          "url": "${sage_url}/api/v1/report",
+          "url_options": { "method": "GET" },
+          "json_options": { "root_is_not_array": true, "columnar": false },
+          "parser": "backend",
+          "computed_columns": [],
+          "filterExpression": "",
+          "summarizeExpression": "",
+          "summarizeBy": "",
+          "expression": "totalCpuWasteMillis"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "orange", "value": null },
+              { "color": "red", "value": 5368709120 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "id": 5,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Total Memory Waste",
+      "type": "stat",
+      "targets": [
+        {
+          "columns": [],
+          "filters": [],
+          "format": 1,
+          "global_query_id": "",
+          "refId": "A",
+          "root_selector": "data",
+          "source": "url",
+          "type": "json",
+          "url": "${sage_url}/api/v1/report",
+          "url_options": { "method": "GET" },
+          "json_options": { "root_is_not_array": true, "columnar": false },
+          "parser": "backend",
+          "computed_columns": [],
+          "filterExpression": "",
+          "summarizeExpression": "",
+          "summarizeBy": "",
+          "expression": "totalMemWasteBytes"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 6,
+      "title": "Namespace Waste Breakdown",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "id": 7,
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "none",
+        "barWidth": 0.6,
+        "groupWidth": 0.7,
+        "xTickLabelRotation": 0,
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "title": "CPU Waste by Namespace (millicores)",
+      "type": "barchart",
+      "targets": [
+        {
+          "columns": [
+            { "selector": "namespace", "text": "Namespace", "type": "string" },
+            { "selector": "totalCpuWasteMillis", "text": "CPU Waste (m)", "type": "number" }
+          ],
+          "filters": [],
+          "format": 1,
+          "global_query_id": "",
+          "refId": "A",
+          "root_selector": "data.namespaces.*",
+          "source": "url",
+          "type": "json",
+          "url": "${sage_url}/api/v1/report",
+          "url_options": { "method": "GET" },
+          "parser": "backend"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "id": 8,
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "none",
+        "barWidth": 0.6,
+        "groupWidth": 0.7,
+        "xTickLabelRotation": 0,
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "title": "Memory Waste by Namespace",
+      "type": "barchart",
+      "targets": [
+        {
+          "columns": [
+            { "selector": "namespace", "text": "Namespace", "type": "string" },
+            { "selector": "totalMemWasteBytes", "text": "Memory Waste", "type": "number" }
+          ],
+          "filters": [],
+          "format": 1,
+          "global_query_id": "",
+          "refId": "A",
+          "root_selector": "data.namespaces.*",
+          "source": "url",
+          "type": "json",
+          "url": "${sage_url}/api/v1/report",
+          "url_options": { "method": "GET" },
+          "parser": "backend"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "id": 9,
+      "title": "Top Wasting Workloads",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "CPU Waste (m)" }, "properties": [{ "id": "unit", "value": "short" }] },
+          { "matcher": { "id": "byName", "options": "Memory Waste" }, "properties": [{ "id": "unit", "value": "decbytes" }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 15 },
+      "id": 10,
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "CPU Waste (m)", "desc": true }],
+        "footer": { "show": false }
+      },
+      "title": "Top Wasting Workloads",
+      "type": "table",
+      "targets": [
+        {
+          "columns": [
+            { "selector": "owner.namespace", "text": "Namespace", "type": "string" },
+            { "selector": "owner.kind", "text": "Kind", "type": "string" },
+            { "selector": "owner.name", "text": "Name", "type": "string" },
+            { "selector": "podCount", "text": "Pods", "type": "number" },
+            { "selector": "totalCpuWasteMillis", "text": "CPU Waste (m)", "type": "number" },
+            { "selector": "totalMemWasteBytes", "text": "Memory Waste", "type": "number" }
+          ],
+          "filters": [],
+          "format": 1,
+          "global_query_id": "",
+          "refId": "A",
+          "root_selector": "data",
+          "source": "url",
+          "type": "json",
+          "url": "${sage_url}/api/v1/workloads",
+          "url_options": { "method": "GET" },
+          "parser": "backend"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "id": 11,
+      "title": "Recommendations",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Confidence" }, "properties": [{ "id": "unit", "value": "percentunit" }] },
+          { "matcher": { "id": "byName", "options": "Savings" }, "properties": [{ "id": "unit", "value": "short" }] }
+        ]
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 24 },
+      "id": 12,
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "Confidence", "desc": true }],
+        "footer": { "show": false }
+      },
+      "title": "Right-Sizing Recommendations",
+      "type": "table",
+      "targets": [
+        {
+          "columns": [
+            { "selector": "target.namespace", "text": "Namespace", "type": "string" },
+            { "selector": "target.kind", "text": "Kind", "type": "string" },
+            { "selector": "target.name", "text": "Workload", "type": "string" },
+            { "selector": "container", "text": "Container", "type": "string" },
+            { "selector": "resource", "text": "Resource", "type": "string" },
+            { "selector": "currentRequest", "text": "Current Req", "type": "number" },
+            { "selector": "recommendedRequest", "text": "Recommended Req", "type": "number" },
+            { "selector": "confidence", "text": "Confidence", "type": "number" },
+            { "selector": "risk", "text": "Risk", "type": "string" },
+            { "selector": "estimatedSavings", "text": "Savings", "type": "number" },
+            { "selector": "reasoning", "text": "Reasoning", "type": "string" }
+          ],
+          "filters": [],
+          "filterExpression": "${risk_filter:pipe}",
+          "format": 1,
+          "global_query_id": "",
+          "refId": "A",
+          "root_selector": "data",
+          "source": "url",
+          "type": "json",
+          "url": "${sage_url}/api/v1/recommendations?risk=${risk_filter}&namespace=${namespace_filter}",
+          "url_options": { "method": "GET" },
+          "parser": "backend"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 },
+      "id": 13,
+      "title": "Savings Summary",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1000 },
+              { "color": "red", "value": 5000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 35 },
+      "id": 14,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["sum"] } },
+      "title": "Total Estimated CPU Savings (millicores)",
+      "type": "stat",
+      "targets": [
+        {
+          "columns": [
+            { "selector": "estimatedSavings", "text": "Savings", "type": "number" }
+          ],
+          "filters": [],
+          "filterExpression": "resource == cpu",
+          "format": 1,
+          "global_query_id": "",
+          "refId": "A",
+          "root_selector": "data",
+          "source": "url",
+          "type": "json",
+          "url": "${sage_url}/api/v1/recommendations",
+          "url_options": { "method": "GET" },
+          "parser": "backend",
+          "summarizeExpression": "sum(estimatedSavings)",
+          "summarizeBy": "sum"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "${DS_INFINITY}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1073741824 },
+              { "color": "red", "value": 5368709120 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 35 },
+      "id": 15,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["sum"] } },
+      "title": "Total Estimated Memory Savings",
+      "type": "stat",
+      "targets": [
+        {
+          "columns": [
+            { "selector": "estimatedSavings", "text": "Savings", "type": "number" }
+          ],
+          "filters": [],
+          "filterExpression": "resource == memory",
+          "format": 1,
+          "global_query_id": "",
+          "refId": "A",
+          "root_selector": "data",
+          "source": "url",
+          "type": "json",
+          "url": "${sage_url}/api/v1/recommendations",
+          "url_options": { "method": "GET" },
+          "parser": "backend",
+          "summarizeExpression": "sum(estimatedSavings)",
+          "summarizeBy": "sum"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["kubernetes", "gerty", "efficiency", "cost-optimization"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "http://gerty-server:8080", "value": "http://gerty-server:8080" },
+        "description": "gerty server URL",
+        "hide": 0,
+        "label": "Sage URL",
+        "name": "sage_url",
+        "options": [
+          { "selected": true, "text": "http://gerty-server:8080", "value": "http://gerty-server:8080" }
+        ],
+        "query": "http://gerty-server:8080",
+        "skipUrlSync": false,
+        "type": "textbox"
+      },
+      {
+        "current": { "selected": true, "text": "All", "value": "" },
+        "description": "Filter recommendations by risk level",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Risk Filter",
+        "name": "risk_filter",
+        "options": [
+          { "selected": true, "text": "All", "value": "" },
+          { "selected": false, "text": "LOW", "value": "LOW" },
+          { "selected": false, "text": "MEDIUM", "value": "MEDIUM" },
+          { "selected": false, "text": "HIGH", "value": "HIGH" }
+        ],
+        "query": "LOW,MEDIUM,HIGH",
+        "type": "custom"
+      },
+      {
+        "current": { "selected": true, "text": "All", "value": "" },
+        "description": "Filter by namespace",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Namespace",
+        "name": "namespace_filter",
+        "options": [
+          { "selected": true, "text": "All", "value": "" }
+        ],
+        "query": "",
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "gerty — Resource Efficiency",
+  "uid": "gerty-efficiency",
+  "version": 1
+}

@@ -1,0 +1,13 @@
+{{- if .Values.grafana.dashboards.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gerty.fullname" . }}-grafana-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gerty.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  gerty-dashboard.json: |-
+    {{- .Files.Get "files/gerty-dashboard.json" | nindent 4 }}
+{{- end }}

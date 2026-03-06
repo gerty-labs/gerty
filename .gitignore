@@ -1,0 +1,33 @@
+# Build artifacts
+bin/
+/agent
+/cli
+/server
+*.exe
+*.test
+*.out
+coverage.out
+
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+.ruff_cache/
+
+# Training artifacts
+output/
+wandb/
+
+# Node
+node_modules/
+
+# VitePress
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
+# SonarCloud
+.sonar/
+
+# Environment
+.env
+.DS_Store

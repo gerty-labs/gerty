@@ -1,0 +1,37 @@
+{{- if .Values.gcpMarketplace.enabled }}
+apiVersion: app.kubernetes.io/v1beta1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gerty.labels" . | nindent 4 }}
+  annotations:
+    marketplace.cloud.google.com/deploy-info: '{"partner_id": "gerty", "product_id": "gerty"}'
+spec:
+  descriptor:
+    type: gerty
+    version: {{ .Chart.AppVersion | quote }}
+    description: "Kubernetes resource efficiency platform with deterministic right-sizing recommendations"
+    links:
+      - description: Documentation
+        url: https://github.com/gerty-labs/gerty
+    notes: |
+      gerty is deployed. Run `gerty report` to see cluster-wide recommendations.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gerty.name" . }}
+  componentKinds:
+    - group: apps
+      kind: DaemonSet
+    - group: apps
+      kind: Deployment
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+{{- end }}
