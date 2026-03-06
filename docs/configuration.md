@@ -69,13 +69,15 @@ helm install gerty gerty/gerty -f my-values.yaml
 
 ### Model Tiers
 
-All model tiers are included at every pricing level. Choose based on your resource budget:
+All model tiers are included at every pricing level. Gerty auto-detects your workload count on install and recommends the appropriate tier.
 
-| `modelSize` | Tier | GGUF Size | RAM Required | Best For |
-|-------------|------|-----------|--------------|----------|
-| `lite` | Lite | 1.3 GB | ~1.5 GB | Small clusters, tight resources |
-| `standard` | Standard | 2.7 GB | ~3 GB | Most clusters (default) |
-| `premium` | Premium | ~5.5 GB | ~6 GB | Large clusters, best reasoning |
+| `modelSize` | Tier | Workloads | GGUF Size | RAM Required |
+|-------------|------|-----------|-----------|--------------|
+| `lite` | Lite | Up to ~150 | 1.3 GB | ~1.5 GB |
+| `standard` | Standard | Up to ~500 | 2.7 GB | ~3 GB |
+| `premium` | Premium | Up to ~1,000 | ~5.5 GB | ~6 GB |
+
+For clusters exceeding ~1,000 workloads, deploy multiple Premium replicas via `slm.replicas`.
 
 | `slm.persistence.enabled` | bool | `false` | Enable persistent model storage |
 | `slm.persistence.size` | string | `5Gi` | PVC size |
