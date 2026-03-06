@@ -91,6 +91,25 @@ For clusters exceeding ~1,000 workloads, deploy multiple Premium replicas via `s
 | `gitops.token` | string | `""` | Personal access token or deploy token |
 | `gitops.tokenSecretRef` | string | `""` | Reference to an existing Secret containing the token |
 | `gitops.gitlab.url` | string | `https://gitlab.com` | GitLab instance URL (for self-hosted) |
+| `gitops.prTemplate` | string | `""` | Custom PR/MR description template ([Go text/template](https://pkg.go.dev/text/template)). Uses built-in default if empty |
+
+### PR Template
+
+The default PR template includes workload name, namespace, pattern classification, confidence score, resource changes table, metrics summary, and risk assessment. All values are populated from the L1 rules engine. If the SLM is enabled, an optional reasoning section is appended.
+
+Override with a custom [Go text/template](https://pkg.go.dev/text/template). Available fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `.Workload` | string | Workload name (e.g. `deployment/api-gateway`) |
+| `.Namespace` | string | Kubernetes namespace |
+| `.Pattern` | string | Classification (`steady`, `burstable`, `batch`) |
+| `.Confidence` | float64 | Confidence score (0.0 - 1.0) |
+| `.ObservationDays` | int | Number of days of metrics data |
+| `.Changes` | []Change | List of resource changes (`.Resource`, `.Current`, `.Recommended`, `.Delta`) |
+| `.Metrics` | Metrics | Summary metrics (`.CPUP95`, `.MemP95`, `.Samples`) |
+| `.Risk` | string | Risk level (`LOW`, `MEDIUM`, `HIGH`) |
+| `.Reasoning` | string | L2 SLM explanation (empty if SLM disabled) |
 
 ## Integrations
 

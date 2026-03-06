@@ -71,6 +71,8 @@ gitops:
   token: ""          # PAT or deploy token (or reference a Secret)
 ```
 
+The PR/MR description uses a built-in template with resource changes, metrics, and risk assessment. Customise it with `gitops.prTemplate` in your values file. See [Configuration](/configuration#pr-template) for available template fields.
+
 ## annotate
 
 Add GitOps source annotations to a Kubernetes resource, linking it to its manifest in a Git repository.
