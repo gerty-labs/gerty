@@ -55,16 +55,28 @@ helm install gerty gerty/gerty -f my-values.yaml
 | `slm.image.repository` | string | `ghcr.io/ggerganov/llama.cpp` | llama.cpp image |
 | `slm.image.tag` | string | `server` | Image tag |
 | `slm.image.digest` | string | `""` | Image digest override |
-| `slm.modelSize` | string | `4b` | Model size (`4b` or `9b`) |
+| `slm.modelSize` | string | `4b` | Model size (`2b`, `4b`, or `9b`) |
 | `slm.model.path` | string | `/models/gerty.gguf` | Model file path in container |
 | `slm.model.repository` | string | `gerty-model` | Model init container image |
 | `slm.model.tag` | string | Chart appVersion | Model image tag |
 | `slm.model.digest` | string | `""` | Model image digest override |
 | `slm.args` | list | See values.yaml | llama.cpp server arguments |
 | `slm.resources.requests.cpu` | string | `1` | CPU request |
-| `slm.resources.requests.memory` | string | `2.5Gi` | Memory request |
+| `slm.resources.requests.memory` | string | `2.5Gi` | Memory request (auto-adjusted by model size) |
 | `slm.resources.limits.cpu` | string | `2` | CPU limit |
-| `slm.resources.limits.memory` | string | `3Gi` | Memory limit |
+| `slm.resources.limits.memory` | string | `3Gi` | Memory limit (auto-adjusted by model size) |
+
+
+### Model Tiers
+
+All model tiers are included at every pricing level. Choose based on your resource budget:
+
+| `modelSize` | Model | GGUF Size | RAM Required | Best For |
+|-------------|-------|-----------|--------------|----------|
+| `2b` | Qwen 3.5 2B | 1.3 GB | ~1.5 GB | Small clusters, tight resources |
+| `4b` | Qwen 3.5 4B | 2.7 GB | ~3 GB | Most clusters (default) |
+| `9b` | Qwen 3.5 9B | ~5.5 GB | ~6 GB | Large clusters, best reasoning |
+
 | `slm.persistence.enabled` | bool | `false` | Enable persistent model storage |
 | `slm.persistence.size` | string | `5Gi` | PVC size |
 | `slm.persistence.storageClass` | string | `""` | Storage class |

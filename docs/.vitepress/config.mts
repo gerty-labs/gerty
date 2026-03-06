@@ -8,6 +8,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: 'Docs', link: '/getting-started' },
+      { text: 'Pricing', link: '/pricing' },
       { text: 'GitHub', link: 'https://github.com/gerty-labs/gerty' },
     ],
 
@@ -29,6 +30,7 @@ export default defineConfig({
       {
         text: 'About',
         items: [
+          { text: 'Pricing', link: '/pricing' },
           { text: 'Manifesto', link: '/manifesto' },
         ],
       },

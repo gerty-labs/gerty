@@ -66,9 +66,18 @@ gerty discover                        # Auto-discover ArgoCD/Flux mappings
 
 ## Pricing
 
-**£5 per node/month.** Flat. Predictable. No hidden fees.
+**First 10 nodes free.** No credit card. No trial period. No feature gates.
 
-We charge per node, not per "saving." Our incentives are aligned with your cluster's health, not your cloud provider's invoice.
+| Total Nodes | Rate |
+|-------------|------|
+| 1--10 | Free |
+| 11--50 | £5/node/month |
+| 51--100 | £4.50/node/month |
+| 101+ | £4/node/month |
+
+All model tiers included -- pick Lite (2B), Standard (4B), or Premium (9B) based on your resource budget, not pricing.
+
+Full pricing details at [gerty.io/pricing](https://gerty.io/pricing).
 
 ## The Manifesto
 
