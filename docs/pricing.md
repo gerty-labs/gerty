@@ -23,25 +23,31 @@ Tier is determined by your **total node count**. The first 10 nodes are free in 
 
 All model tiers are included at every pricing level. Pick the one that fits your resource budget.
 
-| Tier | Model | GGUF Size | RAM | Best For |
-|------|-------|-----------|-----|----------|
-| Lite | Qwen 3.5 2B | 1.3 GB | ~1.5 GB | Small clusters, tight resources |
-| Standard | Qwen 3.5 4B | 2.7 GB | ~3 GB | Most clusters (default) |
-| Premium | Qwen 3.5 9B | ~5.5 GB | ~6 GB | Large clusters, best reasoning |
+| Tier | GGUF Size | RAM | Best For |
+|------|-----------|-----|----------|
+| Lite | 1.3 GB | ~1.5 GB | Small clusters, tight resources |
+| Standard | 2.7 GB | ~3 GB | Most clusters (default) |
+| Premium | ~5.5 GB | ~6 GB | Large clusters, best reasoning |
 
 Select via Helm:
 
 ```bash
-# Lite (2B)
-helm install gerty gerty/gerty --set slm.modelSize=2b
+# Lite
+helm install gerty gerty/gerty --set slm.modelSize=lite
 
-# Standard (4B, default)
+# Standard (default)
 helm install gerty gerty/gerty --set slm.enabled=true
 
-# Premium (9B)
-helm install gerty gerty/gerty --set slm.modelSize=9b
+# Premium
+helm install gerty gerty/gerty --set slm.modelSize=premium
 ```
+
+## Marketplace
+
+Gerty will be available on **AWS Marketplace**, **GCP Marketplace**, and **Azure Marketplace**. Billing handled through your existing cloud account -- no separate invoicing.
 
 ## Why Per-Node
 
 We charge per node, not per "saving." Our incentives are aligned with your cluster's health, not your cloud provider's invoice. If Gerty isn't saving you more than it costs, cancel it.
+
+Other tools charge per vCPU. A 3-node cluster with 96 vCPUs each is 288 "units" instead of 3. We think that's cheeky ;)

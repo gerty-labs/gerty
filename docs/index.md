@@ -15,7 +15,7 @@ hero:
 
 features:
   - title: Self-Hosted Intelligence
-    details: Choose your model tier -- 2B, 4B, or 9B parameters. All run locally via llama.cpp. Your cluster metadata never leaves the VPC.
+    details: Choose your model tier -- Lite, Standard, or Premium. All run locally via llama.cpp. Your cluster metadata never leaves the VPC.
   - title: GitOps-Native
     details: Gerty opens Pull Requests in your repository. No live-patching, no drift, no 3 AM surprises.
   - title: Invisible Agent

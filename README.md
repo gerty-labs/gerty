@@ -75,7 +75,7 @@ gerty discover                        # Auto-discover ArgoCD/Flux mappings
 | 51--100 | £4.50/node/month |
 | 101+ | £4/node/month |
 
-All model tiers included -- pick Lite (2B), Standard (4B), or Premium (9B) based on your resource budget, not pricing.
+All model tiers included -- pick Lite, Standard, or Premium based on your resource budget, not pricing. Available on AWS, GCP, and Azure Marketplace.
 
 Full pricing details at [gerty.io/pricing](https://gerty.io/pricing).
 
