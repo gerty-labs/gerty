@@ -83,6 +83,15 @@ For clusters exceeding ~1,000 workloads, deploy multiple Premium replicas via `s
 | `slm.persistence.size` | string | `5Gi` | PVC size |
 | `slm.persistence.storageClass` | string | `""` | Storage class |
 
+## GitOps
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `gitops.provider` | string | `""` | Git provider (`github` or `gitlab`). Auto-detected from repo URL if not set |
+| `gitops.token` | string | `""` | Personal access token or deploy token |
+| `gitops.tokenSecretRef` | string | `""` | Reference to an existing Secret containing the token |
+| `gitops.gitlab.url` | string | `https://gitlab.com` | GitLab instance URL (for self-hosted) |
+
 ## Integrations
 
 | Parameter | Type | Default | Description |

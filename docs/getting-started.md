@@ -2,8 +2,12 @@
 
 ## Prerequisites
 
-- A Kubernetes cluster (1.27+)
+- A Kubernetes cluster (1.27+) with managed node pools (EKS, GKE Standard, AKS)
 - Helm 3.x
+
+::: info
+Gerty v1 supports clusters with managed node pools. GKE Autopilot and AWS Fargate support is on the roadmap.
+:::
 
 ## Install
 

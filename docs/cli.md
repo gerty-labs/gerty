@@ -50,7 +50,7 @@ gerty recommend --risk HIGH
 
 ## pr
 
-Create a Pull Request in your GitOps repository with right-sizing recommendations.
+Create a Pull Request (GitHub) or Merge Request (GitLab) in your GitOps repository with right-sizing recommendations.
 
 ```bash
 gerty pr deployment/api-gateway
@@ -60,10 +60,16 @@ gerty pr deployment/api-gateway -n production --dry-run
 | Flag | Description |
 |------|-------------|
 | `-n, --namespace` | Target namespace |
-| `--branch-prefix` | PR branch prefix |
-| `--dry-run` | Show what would be changed without creating a PR |
+| `--branch-prefix` | PR/MR branch prefix |
+| `--dry-run` | Show what would be changed without creating a PR/MR |
 
-Requires `gh` (GitHub CLI) on your PATH for PR creation.
+Gerty auto-detects your Git provider from the repository URL. GitHub and GitLab (including self-hosted) are supported. Configure access via Helm values:
+
+```yaml
+gitops:
+  provider: github   # or gitlab
+  token: ""          # PAT or deploy token (or reference a Secret)
+```
 
 ## annotate
 
