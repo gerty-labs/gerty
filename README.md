@@ -1,6 +1,6 @@
 # Gerty
 
-> "I'm here to help you, Sam." -- GERTY
+> Efficiency is an engineering problem. Gerty is the engineer.
 
 **Sovereign Kubernetes right-sizing.** No SaaS. No telemetry egress. No "success tax."
 

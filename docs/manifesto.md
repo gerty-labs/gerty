@@ -4,7 +4,7 @@ title: The Sovereign SRE Manifesto
 
 # The Sovereign SRE Manifesto
 
-> "I'm here to help you, Sam." -- GERTY
+> Efficiency is an engineering problem. Gerty is the engineer.
 
 Cloud optimization has become a corporate tax. Venture-backed platforms want a percentage of your "potential savings" while vacuuming your cluster metadata into their own SaaS silos.
 
