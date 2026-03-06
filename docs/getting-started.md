@@ -34,6 +34,6 @@ This shows waste metrics across all namespaces, with workload classification (st
 
 ## Next Steps
 
-- [Configuration](/configuration) -- customise agent intervals, SLM, integrations
-- [CLI Reference](/cli) -- all commands and flags
-- [Architecture](/architecture) -- how the components fit together
+- [Configuration](/configuration) - customise agent intervals, SLM, integrations
+- [CLI Reference](/cli) - all commands and flags
+- [Architecture](/architecture) - how the components fit together

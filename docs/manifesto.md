@@ -34,7 +34,7 @@ Venture-backed platforms charge a percentage of your "savings." This creates a p
 * **Gerty is a flat rate per node.** Predictable billing. No hidden fees. Our incentives are aligned with your cluster's health, not your cloud provider's invoice.
 
 ### V. Built for the Underground
-Gerty isn't designed for the C-Suite or the Procurement department. She is a specialized, loyal assistant for the **Sovereign SRE** -- the engineer who is tired of over-provisioning "just in case" and wants a silent partner to handle the bin-packing.
+Gerty isn't designed for the C-Suite or the Procurement department. She is a specialized, loyal assistant for the **Sovereign SRE** - the engineer who is tired of over-provisioning "just in case" and wants a silent partner to handle the bin-packing.
 
 ---
 

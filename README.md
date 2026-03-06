@@ -4,7 +4,7 @@
 
 **Sovereign Kubernetes right-sizing.** No SaaS. No telemetry egress. No "success tax."
 
-Gerty is a self-hosted efficiency assistant for Kubernetes clusters. She monitors real-world resource utilisation, classifies workload patterns, and delivers right-sizing recommendations -- all without your metadata leaving the VPC.
+Gerty is a self-hosted efficiency assistant for Kubernetes clusters. She monitors real-world resource utilisation, classifies workload patterns, and delivers right-sizing recommendations - all without your metadata leaving the VPC.
 
 ---
 
@@ -13,7 +13,7 @@ Gerty is a self-hosted efficiency assistant for Kubernetes clusters. She monitor
 - **Collects** per-pod CPU and memory usage via kubelet metrics (DaemonSet, <50MB RAM)
 - **Classifies** workload patterns: steady-state, burstable, batch, idle
 - **Recommends** right-sized resource requests and limits with confidence scoring
-- **Opens PRs** directly in your GitOps repository -- no live-patching, no drift
+- **Opens PRs** directly in your GitOps repository - no live-patching, no drift
 - **Explains** every recommendation with technical justification
 
 ## What Gerty Doesn't Do
@@ -70,12 +70,12 @@ gerty discover                        # Auto-discover ArgoCD/Flux mappings
 
 | Total Nodes | Rate |
 |-------------|------|
-| 1--10 | Free |
+| 1-10 | Free |
 | 11--50 | £5/node/month |
 | 51--100 | £4.50/node/month |
 | 101+ | £4/node/month |
 
-All model tiers included. Gerty auto-detects your workload count and recommends the right tier -- Lite, Standard, or Premium. Available on AWS, GCP, and Azure Marketplace.
+All model tiers included. Gerty auto-detects your workload count and recommends the right tier - Lite, Standard, or Premium. Available on AWS, GCP, and Azure Marketplace.
 
 Full pricing details at [gerty.io/pricing](https://gerty.io/pricing).
 

@@ -33,9 +33,9 @@ Metrics are pushed to the server at a configurable interval (default 5 minutes).
 
 The server processes metrics through two layers:
 
-**L1 -- Rules Engine (deterministic, always on).** Classifies workloads (steady, burstable, batch, idle), computes right-sizing recommendations with confidence scoring, and enforces safety floors. L1 is the safety floor: it never recommends below 50m CPU / 64Mi memory, and caps reductions based on confidence tiers.
+**L1 - Rules Engine (deterministic, always on).** Classifies workloads (steady, burstable, batch, idle), computes right-sizing recommendations with confidence scoring, and enforces safety floors. L1 is the safety floor: it never recommends below 50m CPU / 64Mi memory, and caps reductions based on confidence tiers.
 
-**L2 -- SLM (optional enhancement).** A Small Language Model that generates human-readable explanations and can refine recommendations with workload-specific context. L2 enhances but never overrides L1 safety constraints.
+**L2 - SLM (optional enhancement).** A Small Language Model that generates human-readable explanations and can refine recommendations with workload-specific context. L2 enhances but never overrides L1 safety constraints.
 
 The server exposes a REST API consumed by the CLI.
 
@@ -56,6 +56,6 @@ See the [CLI Reference](/cli) for full usage.
 
 ## SLM
 
-When enabled, the SLM runs as a separate Deployment using [llama.cpp](https://github.com/ggerganov/llama.cpp). The model is delivered via an init container and served CPU-only -- no GPU required, no external API calls.
+When enabled, the SLM runs as a separate Deployment using [llama.cpp](https://github.com/ggerganov/llama.cpp). The model is delivered via an init container and served CPU-only - no GPU required, no external API calls.
 
 Typical resource usage: ~2.5GB RAM, 1-2 CPU cores. The SLM is optional; L1 provides full functionality without it.
