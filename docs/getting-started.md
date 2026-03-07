@@ -38,6 +38,6 @@ This shows waste metrics across all namespaces, with workload classification (st
 
 ## Next Steps
 
-- [Configuration](/configuration) - customise agent intervals, SLM, integrations
+- [Configuration](/configuration) - customise agent intervals, AI reasoning, integrations
 - [CLI Reference](/cli) - all commands and flags
-- [Architecture](/architecture) - how the components fit together
+- [Architecture](/how-it-works) - how the components fit together

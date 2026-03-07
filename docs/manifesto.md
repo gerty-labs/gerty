@@ -18,12 +18,12 @@ Cloud "Cost Optimization" has been hijacked by FinOps dashboards and enterprise 
 ### II. The Sovereignty of the VPC
 In 2026, the "SaaS-First" model is a liability. Sending your pod names, resource history, and cluster metadata to a third-party cloud for "analysis" is an unnecessary risk.
 * **The Gerty Rule:** Intelligence belongs where the data lives.
-* Gerty's L2 SLM (Small Language Model) runs **locally** on your nodes.
+* Gerty's AI runs **locally** on your nodes.
 * No telemetry egress. No metadata "phone-home." No exceptions.
 
 ### III. GitOps is the Source of Truth
 "Auto-pilot" features that live-patch your API server are a recipe for infrastructure drift and 3:00 AM outages. Gerty respects the workflow:
-* **Observe:** Monitor real-world resource utilization at the L1/L2 layer.
+* **Observe:** Monitor real-world resource utilization continuously.
 * **Advise:** Justify rightsizing recommendations with deep-tech reasoning.
 * **Commit:** Gerty doesn't just patch; she opens the **Pull Request** in your repository.
 
@@ -38,4 +38,4 @@ Gerty isn't designed for the C-Suite or the Procurement department. She is a spe
 
 ---
 
-[Get Started](/getting-started) | [View Architecture](/architecture)
+[Get Started](/getting-started) | [View Architecture](/how-it-works)

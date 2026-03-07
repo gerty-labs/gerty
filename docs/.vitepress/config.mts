@@ -17,7 +17,7 @@ export default defineConfig({
         text: 'Guide',
         items: [
           { text: 'Getting Started', link: '/getting-started' },
-          { text: 'Architecture', link: '/architecture' },
+          { text: 'Architecture', link: '/how-it-works' },
         ],
       },
       {

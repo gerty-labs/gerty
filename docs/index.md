@@ -14,12 +14,12 @@ hero:
       link: https://github.com/gerty-labs/gerty
 
 features:
-  - title: Self-Hosted Intelligence
-    details: Choose your model tier - Lite, Standard, or Premium. All run locally via llama.cpp. Your cluster metadata never leaves the VPC.
+  - title: Intelligent Right-Sizing
+    details: A deterministic rules engine handles every workload. An optional on-cluster AI adds deeper reasoning for the hard cases — runtime-aware sizing, temporal patterns, hold decisions. Choose Lite, Standard, or Premium based on how much reasoning depth you want.
   - title: GitOps-Native
     details: Gerty opens Pull Requests in your repository. No live-patching, no drift, no 3 AM surprises.
   - title: Invisible Agent
-    details: 50MB RAM, 0.05 CPU. If the efficiency tool uses meaningful resources, it has failed.
+    details: Tiny footprint per node. The AI scales from zero when needed, processes the hard decisions, then scales back to zero. You pay for burst compute only when analysing. Your metadata never leaves the cluster.
 ---
 
 ::: warning COMING SOON

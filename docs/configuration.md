@@ -47,41 +47,30 @@ helm install gerty gerty/gerty -f my-values.yaml
 | `server.nodeSelector` | object | `{}` | Node selector |
 | `server.tolerations` | list | `[]` | Tolerations |
 
-## SLM
+## AI Reasoning
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `slm.enabled` | bool | `false` | Enable the SLM deployment |
-| `slm.image.repository` | string | `ghcr.io/ggerganov/llama.cpp` | llama.cpp image |
-| `slm.image.tag` | string | `server` | Image tag |
-| `slm.image.digest` | string | `""` | Image digest override |
-| `slm.modelSize` | string | `standard` | Model tier (`lite`, `standard`, or `premium`) |
-| `slm.model.path` | string | `/models/gerty.gguf` | Model file path in container |
-| `slm.model.repository` | string | `gerty-model` | Model init container image |
-| `slm.model.tag` | string | Chart appVersion | Model image tag |
-| `slm.model.digest` | string | `""` | Model image digest override |
-| `slm.args` | list | See values.yaml | llama.cpp server arguments |
-| `slm.resources.requests.cpu` | string | `1` | CPU request |
-| `slm.resources.requests.memory` | string | `2.5Gi` | Memory request (auto-adjusted by model size) |
-| `slm.resources.limits.cpu` | string | `2` | CPU limit |
-| `slm.resources.limits.memory` | string | `3Gi` | Memory limit (auto-adjusted by model size) |
-
-
-### Model Tiers
-
-All model tiers are included at every pricing level. Gerty auto-detects your workload count on install and recommends the appropriate tier.
-
-| `modelSize` | Tier | Workloads | GGUF Size | RAM Required |
-|-------------|------|-----------|-----------|--------------|
-| `lite` | Lite | Up to ~150 | 1.3 GB | ~1.5 GB |
-| `standard` | Standard | Up to ~500 | 2.7 GB | ~3 GB |
-| `premium` | Premium | Up to ~1,000 | ~5.5 GB | ~6 GB |
-
-For clusters exceeding ~1,000 workloads, deploy multiple Premium replicas via `slm.replicas`.
-
+| `slm.enabled` | bool | `false` | Enable AI reasoning |
+| `slm.tier` | string | `standard` | Intelligence tier (`lite`, `standard`, or `premium`) |
+| `slm.scaling.maxMemoryBudget` | string | `12Gi` | Max total RAM Gerty can consume for AI reasoning |
+| `slm.scaling.maxCpuBudget` | string | `4` | Max total CPU cores for AI reasoning |
+| `slm.scaling.minClusterHeadroom` | string | `20%` | Never consume more than this % of free cluster resources |
 | `slm.persistence.enabled` | bool | `false` | Enable persistent model storage |
 | `slm.persistence.size` | string | `5Gi` | PVC size |
 | `slm.persistence.storageClass` | string | `""` | Storage class |
+
+### Intelligence Tiers
+
+All tiers are included at every pricing level. The tier determines reasoning depth, not workload capacity.
+
+| `slm.tier` | Reasoning Depth | Best For |
+|-------------|----------------|----------|
+| `lite` | Fast scanning, good recommendations | Most clusters, tight resource budgets |
+| `standard` | Deeper analysis for complex workloads | Production clusters with mixed workload types |
+| `premium` | Maximum reasoning quality | Large clusters with complex, heterogeneous workloads |
+
+Gerty's AI scales automatically based on demand. Standard and Premium tiers include a deeper analysis layer that scales from zero when needed, then scales back down. Gerty checks cluster headroom before scaling and degrades gracefully if resources are tight.
 
 ## GitOps
 
@@ -95,7 +84,7 @@ For clusters exceeding ~1,000 workloads, deploy multiple Premium replicas via `s
 
 ### PR Template
 
-The default PR template includes workload name, namespace, pattern classification, confidence score, resource changes table, metrics summary, and risk assessment. All values are populated from the L1 rules engine. If the SLM is enabled, an optional reasoning section is appended.
+The default PR template includes workload name, namespace, pattern classification, confidence score, resource changes table, metrics summary, and risk assessment. All values are populated from the rules engine. If AI reasoning is enabled, an optional reasoning section is appended.
 
 Override with a custom [Go text/template](https://pkg.go.dev/text/template). Available fields:
 
@@ -109,7 +98,7 @@ Override with a custom [Go text/template](https://pkg.go.dev/text/template). Ava
 | `.Changes` | []Change | List of resource changes (`.Resource`, `.Current`, `.Recommended`, `.Delta`) |
 | `.Metrics` | Metrics | Summary metrics (`.CPUP95`, `.MemP95`, `.Samples`) |
 | `.Risk` | string | Risk level (`LOW`, `MEDIUM`, `HIGH`) |
-| `.Reasoning` | string | L2 SLM explanation (empty if SLM disabled) |
+| `.Reasoning` | string | AI explanation (empty if AI reasoning disabled) |
 
 ## Integrations
 
