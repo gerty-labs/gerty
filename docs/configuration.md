@@ -47,6 +47,23 @@ helm install gerty gerty/gerty -f my-values.yaml
 | `server.nodeSelector` | object | `{}` | Node selector |
 | `server.tolerations` | list | `[]` | Tolerations |
 
+## Server Persistence
+
+Gerty persists aggregator state so recommendations survive pod restarts. By default, it uses an embedded database backed by a PVC. For multi-AZ clusters, an external PostgreSQL database can be used instead.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `server.persistence.enabled` | bool | `true` | Enable state persistence |
+| `server.persistence.storageClass` | string | `""` | PVC storage class (empty = cluster default) |
+| `server.persistence.size` | string | `1Gi` | PVC size |
+| `server.persistence.accessModes` | list | `[ReadWriteOnce]` | PVC access modes |
+| `server.externalDatabase.enabled` | bool | `false` | Use external PostgreSQL instead of embedded storage |
+| `server.externalDatabase.url` | string | `""` | PostgreSQL connection string |
+
+::: tip
+PVCs bind to a single availability zone. In multi-AZ clusters, either pin the server to an AZ via `nodeAffinity`, use a cross-AZ StorageClass, or set `server.externalDatabase.enabled=true` with a PostgreSQL URL.
+:::
+
 ## AI Reasoning
 
 | Parameter | Type | Default | Description |

@@ -130,6 +130,7 @@ helm install gerty gerty/gerty --set slm.enabled=true --set slm.tier=standard
 
 - **GitOps**: GitHub and GitLab. Auto-detected from repo URL. Gerty opens PRs — you review and merge.
 - **Slack**: Periodic digest messages with grouped recommendations. Configurable severity filter and dedup.
-- **Grafana**: Dashboard shipped as a ConfigMap for sidecar auto-import.
-- **Prometheus**: Agent exposes standard `/metrics` endpoint.
+- **Grafana**: Dashboard shipped as a ConfigMap for sidecar auto-import. An escalation pipeline dashboard is available in `deploy/dashboards/`.
+- **Prometheus**: Server exposes a standard `/metrics` endpoint. Scrape annotations are added to the server pod automatically.
+- **Observability**: Dashboard templates for Grafana, Datadog, New Relic, and an OpenTelemetry Collector config are provided in `deploy/dashboards/`.
 - **Marketplace**: AWS, GCP, and Azure Marketplace (coming soon).

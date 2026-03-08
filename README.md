@@ -32,8 +32,8 @@ Kubernetes Cluster
  |     Reports to gerty-server
  |
  +-- gerty-server
-       L1: Deterministic rules engine
-       L2: Local SLM (Small Language Model, optional)
+       Deterministic rules engine (always on)
+       On-cluster AI reasoning (optional)
        Serves REST API
 
 gerty-cli
@@ -42,7 +42,7 @@ gerty-cli
 
 The agent is invisible: 50MB RAM, 0.05 CPU. If the efficiency tool uses meaningful resources, it has failed.
 
-The SLM runs locally on your nodes via llama.cpp. CPU-only, ~2.5GB RAM. No GPU required. No API calls to external services.
+The AI runs locally on your nodes. CPU-only, no GPU required, no external API calls. Your cluster metadata never leaves the VPC.
 
 ## Install
 
