@@ -540,6 +540,54 @@ image:
 	assert.Contains(t, err.Error(), "no resource values found")
 }
 
+func TestPathTraversal_Rejected(t *testing.T) {
+	recs := []models.Recommendation{
+		{
+			Target:         models.OwnerReference{Kind: "Deployment", Name: "api-gateway", Namespace: "production"},
+			Resource:       "cpu",
+			CurrentRequest: 1000,
+			RecommendedReq: 250,
+			Pattern:        models.PatternSteady,
+			Confidence:     0.92,
+			Risk:           models.RiskLow,
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := models.NewOKResponse(recs)
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	// Annotations with a path traversal attempt.
+	annotations := map[string]string{
+		"gerty.io/repo": "github.com/acme/manifests",
+		"gerty.io/path": "../../../etc/passwd",
+	}
+	annotationsJSON, _ := json.Marshal(annotations)
+
+	tmpDir, err := os.MkdirTemp("", "gerty-test-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	runner := newMockRunner()
+	runner.addResponse("gh auth status", []byte("ok"), nil)
+	runner.addResponse("kubectl get", annotationsJSON, nil)
+	runner.addResponse("gh repo clone", []byte(""), nil)
+	runner.addResponse("git checkout -b", []byte(""), nil)
+
+	p := NewPRCreator(runner, server.URL)
+	_, err = p.Create(context.Background(), Options{
+		Kind:         "Deployment",
+		Name:         "api-gateway",
+		Namespace:    "production",
+		BranchPrefix: "gerty-rightsizing",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escapes repo directory")
+}
+
 func TestModifyManifestFile_QuotedValues(t *testing.T) {
 	content := `apiVersion: apps/v1
 kind: Deployment

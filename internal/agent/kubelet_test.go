@@ -135,6 +135,25 @@ func TestVerifyKubeletCert_WrongCA(t *testing.T) {
 	assert.Contains(t, err.Error(), "chain verification failed")
 }
 
+func TestVerifyKubeletCert_NotYetValid(t *testing.T) {
+	ca, caKey := generateTestCA(t)
+
+	leaf, _ := signCert(t, ca, caKey, &x509.Certificate{
+		SerialNumber: big.NewInt(6),
+		Subject:      pkix.Name{CommonName: "kubelet-future"},
+		NotBefore:    time.Now().Add(24 * time.Hour), // not yet valid
+		NotAfter:     time.Now().Add(48 * time.Hour),
+	})
+
+	caPool := x509.NewCertPool()
+	caPool.AddCert(ca)
+
+	verify := verifyKubeletCert(caPool)
+	err := verify([][]byte{leaf.Raw}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expired")
+}
+
 func TestVerifyKubeletCert_IntermediateChain(t *testing.T) {
 	// CA → intermediate → leaf
 	rootCA, rootKey := generateTestCA(t)

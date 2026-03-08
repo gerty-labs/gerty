@@ -12,20 +12,12 @@ func TestAnnotateCmd_PrintsCommand(t *testing.T) {
 	cmd := annotateCmd()
 	buf := &bytes.Buffer{}
 	cmd.SetOut(buf)
+	cmd.SetErr(buf)
 	cmd.SetArgs([]string{
 		"deployment/payment-service",
 		"--repo", "github.com/acme/manifests",
 		"--path", "apps/payment-service/values.yaml",
 	})
-
-	// Capture stdout
-	oldStdout := cmd.OutOrStdout()
-	_ = oldStdout
-	cmd.SetOut(buf)
-
-	// The command writes to os.Stdout directly, so we test via RunE
-	rootCmd := cmd
-	rootCmd.SetOut(buf)
 
 	err := cmd.Execute()
 	require.NoError(t, err)

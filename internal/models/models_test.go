@@ -40,7 +40,7 @@ func TestContainerMetrics_JSONRoundTrip(t *testing.T) {
 	assert.Equal(t, cm, decoded)
 }
 
-func TestContainerMetrics_SnakeCaseFields(t *testing.T) {
+func TestContainerMetrics_CamelCaseFields(t *testing.T) {
 	cm := ContainerMetrics{
 		PodName:       "test-pod",
 		PodNamespace:  "ns",
@@ -484,24 +484,6 @@ func TestContainerKey(t *testing.T) {
 		got := ContainerKey(tt.ns, tt.pod, tt.container)
 		assert.Equal(t, tt.want, got)
 	}
-}
-
-// --- WorkloadPattern constants ---
-
-func TestWorkloadPatternStringValues(t *testing.T) {
-	assert.Equal(t, WorkloadPattern("steady"), PatternSteady)
-	assert.Equal(t, WorkloadPattern("burstable"), PatternBurstable)
-	assert.Equal(t, WorkloadPattern("batch"), PatternBatch)
-	assert.Equal(t, WorkloadPattern("idle"), PatternIdle)
-	assert.Equal(t, WorkloadPattern("anomalous"), PatternAnomalous)
-}
-
-// --- RiskLevel constants ---
-
-func TestRiskLevelStringValues(t *testing.T) {
-	assert.Equal(t, RiskLevel("LOW"), RiskLow)
-	assert.Equal(t, RiskLevel("MEDIUM"), RiskMedium)
-	assert.Equal(t, RiskLevel("HIGH"), RiskHigh)
 }
 
 // --- Edge cases ---

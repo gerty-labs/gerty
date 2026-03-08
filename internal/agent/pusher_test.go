@@ -67,6 +67,20 @@ func TestPusher_PushOnce_ServerErrorStatus(t *testing.T) {
 	assert.Contains(t, err.Error(), "status 500")
 }
 
+func TestPusher_PushOnce_HTTP429_SilentSuccess(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer ts.Close()
+
+	store := NewStore()
+	reporter := NewReporter("test-node", store)
+	pusher := NewPusher(ts.URL, reporter, time.Second)
+
+	err := pusher.pushOnce(context.Background())
+	assert.NoError(t, err, "429 should be treated as success (rate limited, not an error)")
+}
+
 func TestPusher_Run_CancelsGracefully(t *testing.T) {
 	var callCount atomic.Int32
 
