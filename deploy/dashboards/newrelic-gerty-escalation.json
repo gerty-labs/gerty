@@ -1,0 +1,146 @@
+{
+  "name": "gerty — Escalation Pipeline",
+  "description": "L3 queue depth, dispatch rate, degradations, skipped cycles",
+  "permissions": "PUBLIC_READ_WRITE",
+  "pages": [
+    {
+      "name": "Escalation Pipeline",
+      "description": "",
+      "widgets": [
+        {
+          "title": "L3 Queue Depth",
+          "layout": { "column": 1, "row": 1, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT latest(gerty_escalation_queue_depth) FROM Metric TIMESERIES AUTO"
+              }
+            ],
+            "yAxisLeft": { "zero": true }
+          }
+        },
+        {
+          "title": "Current Queue Depth",
+          "layout": { "column": 7, "row": 1, "width": 3, "height": 3 },
+          "visualization": { "id": "viz.billboard" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT latest(gerty_escalation_queue_depth) FROM Metric"
+              }
+            ],
+            "thresholds": [
+              { "alertSeverity": "WARNING", "value": 5 },
+              { "alertSeverity": "CRITICAL", "value": 20 }
+            ]
+          }
+        },
+        {
+          "title": "Total Escalations Dispatched",
+          "layout": { "column": 10, "row": 1, "width": 3, "height": 3 },
+          "visualization": { "id": "viz.billboard" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT latest(gerty_escalations_dispatched_total) FROM Metric"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Escalation Dispatch Rate",
+          "layout": { "column": 1, "row": 4, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT rate(sum(gerty_escalations_dispatched_total), 1 SECOND) FROM Metric TIMESERIES AUTO"
+              }
+            ],
+            "yAxisLeft": { "zero": true }
+          }
+        },
+        {
+          "title": "Escalations Per Hour",
+          "layout": { "column": 7, "row": 4, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT rate(sum(gerty_escalations_dispatched_total), 1 HOUR) FROM Metric TIMESERIES 1 HOUR"
+              }
+            ],
+            "yAxisLeft": { "zero": true }
+          }
+        },
+        {
+          "title": "Degradation Rate by Tier",
+          "layout": { "column": 1, "row": 7, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT rate(sum(gerty_escalation_degradations_total), 1 SECOND) FROM Metric FACET from, to TIMESERIES AUTO"
+              }
+            ],
+            "yAxisLeft": { "zero": true }
+          }
+        },
+        {
+          "title": "Total Degradations",
+          "layout": { "column": 7, "row": 7, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.billboard" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT latest(gerty_escalation_degradations_total) FROM Metric FACET from, to"
+              }
+            ],
+            "thresholds": [
+              { "alertSeverity": "WARNING", "value": 1 },
+              { "alertSeverity": "CRITICAL", "value": 10 }
+            ]
+          }
+        },
+        {
+          "title": "Skipped Cycle Rate",
+          "layout": { "column": 1, "row": 10, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT rate(sum(gerty_cycle_skipped_total), 1 SECOND) FROM Metric TIMESERIES AUTO"
+              }
+            ],
+            "yAxisLeft": { "zero": true }
+          }
+        },
+        {
+          "title": "Total Cycles Skipped",
+          "layout": { "column": 7, "row": 10, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.billboard" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT latest(gerty_cycle_skipped_total) FROM Metric"
+              }
+            ],
+            "thresholds": [
+              { "alertSeverity": "CRITICAL", "value": 1 }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

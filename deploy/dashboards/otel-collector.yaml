@@ -1,0 +1,71 @@
+# OpenTelemetry Collector configuration for scraping gerty Prometheus metrics.
+#
+# Usage:
+#   1. Deploy as a ConfigMap or mount directly into your otel-collector container.
+#   2. Adjust the endpoint below to match your gerty-server service name/namespace.
+#   3. Replace the exporter with your backend (otlp, prometheus, datadog, etc).
+#
+# This config scrapes the four gerty escalation metrics and forwards them
+# to any OTLP-compatible backend (Jaeger, Tempo, Grafana Cloud, Datadog,
+# New Relic, Honeycomb, etc).
+
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: gerty-server
+          scrape_interval: 15s
+          metrics_path: /metrics
+          static_configs:
+            - targets:
+                - gerty-server.gerty.svc.cluster.local:8080
+              labels:
+                service: gerty
+                component: server
+          # Only keep the four gerty-specific metrics to reduce cardinality.
+          metric_relabel_configs:
+            - source_labels: [__name__]
+              regex: "gerty_escalation_queue_depth|gerty_escalations_dispatched_total|gerty_escalation_degradations_total|gerty_cycle_skipped_total"
+              action: keep
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+
+  # Add resource attributes for service identification.
+  resource:
+    attributes:
+      - key: service.name
+        value: gerty
+        action: upsert
+      - key: service.namespace
+        value: gerty
+        action: upsert
+
+exporters:
+  # Replace with your backend. Examples:
+  #
+  # otlp:
+  #   endpoint: otel-collector.observability.svc.cluster.local:4317
+  #   tls:
+  #     insecure: true
+  #
+  # otlphttp:
+  #   endpoint: https://otlp.nr-data.net
+  #   headers:
+  #     api-key: ${NEW_RELIC_LICENSE_KEY}
+  #
+  # datadog:
+  #   api:
+  #     key: ${DD_API_KEY}
+  #
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [batch, resource]
+      exporters: [debug]

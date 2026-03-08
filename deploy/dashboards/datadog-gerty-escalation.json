@@ -1,0 +1,191 @@
+{
+  "title": "gerty — Escalation Pipeline",
+  "description": "L3 queue depth, dispatch rate, degradations, skipped cycles",
+  "widgets": [
+    {
+      "id": 1,
+      "definition": {
+        "title": "L3 Queue Depth",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "avg:gerty_escalation_queue_depth{*}",
+            "display_type": "area",
+            "style": {
+              "palette": "dog_classic",
+              "line_type": "solid",
+              "line_width": "normal"
+            }
+          }
+        ],
+        "yaxis": { "min": "0" },
+        "markers": [
+          {
+            "value": "y = 5",
+            "display_type": "warning dashed",
+            "label": "queue building"
+          },
+          {
+            "value": "y = 20",
+            "display_type": "error dashed",
+            "label": "queue backlog"
+          }
+        ]
+      },
+      "layout": { "x": 0, "y": 0, "width": 6, "height": 3 }
+    },
+    {
+      "id": 2,
+      "definition": {
+        "title": "Current Queue Depth",
+        "type": "query_value",
+        "requests": [
+          {
+            "q": "avg:gerty_escalation_queue_depth{*}",
+            "aggregator": "last"
+          }
+        ],
+        "precision": 0
+      },
+      "layout": { "x": 6, "y": 0, "width": 3, "height": 3 }
+    },
+    {
+      "id": 3,
+      "definition": {
+        "title": "Total Escalations Dispatched",
+        "type": "query_value",
+        "requests": [
+          {
+            "q": "avg:gerty_escalations_dispatched_total{*}",
+            "aggregator": "last"
+          }
+        ],
+        "precision": 0
+      },
+      "layout": { "x": 9, "y": 0, "width": 3, "height": 3 }
+    },
+    {
+      "id": 4,
+      "definition": {
+        "title": "Escalation Dispatch Rate",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "per_second(avg:gerty_escalations_dispatched_total{*})",
+            "display_type": "bars",
+            "style": {
+              "palette": "dog_classic",
+              "line_type": "solid",
+              "line_width": "normal"
+            }
+          }
+        ],
+        "yaxis": { "min": "0" }
+      },
+      "layout": { "x": 0, "y": 3, "width": 6, "height": 3 }
+    },
+    {
+      "id": 5,
+      "definition": {
+        "title": "Escalations Per Hour",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "avg:gerty_escalations_dispatched_total{*}.rollup(count, 3600)",
+            "display_type": "line",
+            "style": {
+              "palette": "dog_classic",
+              "line_type": "solid",
+              "line_width": "normal"
+            }
+          }
+        ],
+        "yaxis": { "min": "0" }
+      },
+      "layout": { "x": 6, "y": 3, "width": 6, "height": 3 }
+    },
+    {
+      "id": 6,
+      "definition": {
+        "title": "Degradation Rate by Tier",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "per_second(sum:gerty_escalation_degradations_total{*} by {from,to})",
+            "display_type": "bars",
+            "style": {
+              "palette": "warm",
+              "line_type": "solid",
+              "line_width": "normal"
+            }
+          }
+        ],
+        "yaxis": { "min": "0" }
+      },
+      "layout": { "x": 0, "y": 6, "width": 6, "height": 3 }
+    },
+    {
+      "id": 7,
+      "definition": {
+        "title": "Total Degradations",
+        "type": "query_value",
+        "requests": [
+          {
+            "q": "sum:gerty_escalation_degradations_total{*}",
+            "aggregator": "last"
+          }
+        ],
+        "precision": 0,
+        "conditional_formats": [
+          { "comparator": ">=", "value": 10, "palette": "white_on_red" },
+          { "comparator": ">=", "value": 1, "palette": "white_on_yellow" },
+          { "comparator": "<", "value": 1, "palette": "white_on_green" }
+        ]
+      },
+      "layout": { "x": 6, "y": 6, "width": 6, "height": 3 }
+    },
+    {
+      "id": 8,
+      "definition": {
+        "title": "Skipped Cycle Rate",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "per_second(avg:gerty_cycle_skipped_total{*})",
+            "display_type": "bars",
+            "style": {
+              "palette": "orange",
+              "line_type": "solid",
+              "line_width": "normal"
+            }
+          }
+        ],
+        "yaxis": { "min": "0" }
+      },
+      "layout": { "x": 0, "y": 9, "width": 6, "height": 3 }
+    },
+    {
+      "id": 9,
+      "definition": {
+        "title": "Total Cycles Skipped",
+        "type": "query_value",
+        "requests": [
+          {
+            "q": "avg:gerty_cycle_skipped_total{*}",
+            "aggregator": "last"
+          }
+        ],
+        "precision": 0,
+        "conditional_formats": [
+          { "comparator": ">=", "value": 1, "palette": "white_on_red" },
+          { "comparator": "<", "value": 1, "palette": "white_on_green" }
+        ]
+      },
+      "layout": { "x": 6, "y": 9, "width": 6, "height": 3 }
+    }
+  ],
+  "template_variables": [],
+  "layout_type": "ordered",
+  "notify_list": [],
+  "reflow_type": "fixed"
+}

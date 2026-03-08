@@ -39,6 +39,19 @@ server:
     port: 8080
   nodeSelector: {}
   tolerations: []
+  # Aggregator state persistence (survives pod restarts).
+  persistence:
+    enabled: true
+    storageClass: ""    # empty = default StorageClass
+    size: 1Gi
+    accessModes:
+      - ReadWriteOnce
+    # Note: PVC binds to a single availability zone. In multi-AZ clusters,
+    # either pin the server to an AZ via nodeAffinity, use a cross-AZ
+    # StorageClass, or set externalDatabase.enabled=true with a PostgreSQL URL.
+  externalDatabase:
+    enabled: false
+    url: ""             # DATABASE_URL — full PostgreSQL connection string
 
 slm:
   enabled: false
